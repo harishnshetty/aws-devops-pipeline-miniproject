@@ -77,21 +77,24 @@ phases:
     commands:
       - echo "Pre build phase ..."
       - apt-get update
-      - apt-get install -y jq
+      - apt-get install -y jq curl unzip
       - wget https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-7.3.0.5189-linux-x64.zip
-      - echo "Current path is >>>"
-      - sh $pwd
-      - unzip ./sonar-scanner-cli-7.3.0.5189-linux-x64.zip
-      - ls $pwd
+      - unzip -q sonar-scanner-cli-7.3.0.5189-linux-x64.zip
       - export PATH=$PATH:./sonar-scanner-7.3.0.5189-linux-x64/bin/
   build:
     commands:
       - echo "Build phase ..."
       - sonar-scanner -Dsonar.login=$LOGIN -Dsonar.host.url=$HOST -Dsonar.projectKey=$Project -Dsonar.organization=$Organization
-      - sleep 5
-      - curl https://sonarcloud.io/api/qualitygates/project_status?projectKey=$Project >result.json
+      - sleep 10  # Increased sleep to ensure analysis is processed
+      - curl -s "https://sonarcloud.io/api/qualitygates/project_status?projectKey=$Project" > result.json
       - cat result.json
-      - if [ $(jq -r '.projectStatus.status' result.json) = ERROR ] ; then $CODEBUILD_BUILD_SUCCEEDING -eq 0 ;fi
+      - |
+        if [ $(jq -r '.projectStatus.status' result.json) = "ERROR" ]; then
+          echo "Quality Gate failed! Build will be marked as failed."
+          exit 1
+        else
+          echo "Quality Gate passed!"
+        fi
   post_build:
     commands:
       - echo "Post build phase ..."
