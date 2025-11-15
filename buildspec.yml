@@ -34,10 +34,16 @@ phases:
       - wget -q "$SONAR_ZIP_URL" -O sonar-scanner.zip || curl -sSL "$SONAR_ZIP_URL" -o sonar-scanner.zip
       - unzip -q sonar-scanner.zip
       - SCANNER_DIR=$(ls -d sonar-scanner-* 2>/dev/null | head -n1)
-      - if [ -z "$SCANNER_DIR" ]; then echo "ERROR: sonar scanner directory not found after unzip" && ls -la && exit 1; fi
+      - |
+        if [ -z "$SCANNER_DIR" ]; then
+          echo "ERROR: sonar scanner directory not found after unzip"
+          ls -la
+          exit 1
+        fi
       - chmod +x "$SCANNER_DIR/bin/sonar-scanner"
       - export PATH="$PWD/$SCANNER_DIR/bin:$PATH"
-      - echo "sonar-scanner path: $(which sonar-scanner || echo 'not found')"
+      - |
+        echo "sonar-scanner path: $(which sonar-scanner || echo 'not found')"
       - sonar-scanner --version || echo "sonar-scanner version check failed (continuing)"
       - echo "Pre-build setup complete"
 
@@ -58,7 +64,8 @@ phases:
 
   post_build:
     commands:
-      - echo "Post build phase: run OWASP Dependency-Check v12.1.9"
+      - |
+        echo "Post build phase: run OWASP Dependency-Check v12.1.9"
       - echo "Downloading Dependency-Check..."
       - wget -q "$DEP_CHECK_ZIP_URL" -O dependency-check.zip || curl -sSL "$DEP_CHECK_ZIP_URL" -o dependency-check.zip || true
       - |
