@@ -72,91 +72,93 @@ phases:
           echo "Quality Gate passed or not present."
         fi
 
-  post_build:
-    commands:
-      - |
-        echo "=== Post build phase: OWASP Dependency-Check v12.1.9 ==="
-      - |
-        echo "Checking for dependency files to scan..."
-        find . -name "package.json" -o -name "pom.xml" -o -name "build.gradle" -o -name "*.csproj" -o -name "requirements.txt" | head -10 || echo "No common dependency files found (this may be normal)"
-      - |
-        echo "Downloading Dependency-Check..."
+post_build:
+  commands:
+    - |
+      echo "=== Post build phase: OWASP Dependency-Check v12.1.9 (EFS-backed cache) ==="
+    - |
+      echo "Checking for dependency files to scan..."
+      find . -name "package.json" -o -name "pom.xml" -o -name "build.gradle" -o -name "*.csproj" -o -name "requirements.txt" | head -10 || echo "No common dependency files found (this may be normal)"
+    - |
+      # EFS paths (adjust if you mounted at a different mountpoint)
+      EFS_ROOT="/mnt/efs"
+      DC_DATA_DIR="$EFS_ROOT/dependency-check-data"       # <-- NVD DB stored here
+      DC_CLI_DIR="$EFS_ROOT/dependency-check-cli"         # <-- unzip CLI here to avoid re-unzip
+      mkdir -p "$DC_DATA_DIR" "$DC_CLI_DIR"
+      chmod 755 "$DC_DATA_DIR" "$DC_CLI_DIR" || true
+      echo "EFS paths prepared:"
+      ls -ld "$EFS_ROOT" "$DC_DATA_DIR" "$DC_CLI_DIR" || true
+    - |
+      echo "Downloading Dependency-Check (if not cached in EFS)..."
+      if [ -f dependency-check.zip ]; then
+        echo "dependency-check.zip already present in workspace"
+      else
         if wget -q "$DEP_CHECK_ZIP_URL" -O dependency-check.zip; then
-          echo "Download via wget successful"
+          echo "Downloaded dependency-check.zip via wget"
         elif curl -sSL "$DEP_CHECK_ZIP_URL" -o dependency-check.zip; then
-          echo "Download via curl successful"
+          echo "Downloaded dependency-check.zip via curl"
         else
           echo "ERROR: Failed to download Dependency-Check from $DEP_CHECK_ZIP_URL"
           echo "Skipping Dependency-Check analysis"
-          # keep build success if you want to continue despite missing dependency-check
           exit 0
         fi
-      - |
-        # Unzip into a fixed directory so we can reliably find the script
-        if [ -f dependency-check.zip ]; then
-          echo "Unzipping Dependency-Check to ./dependency-check..."
-          if unzip -q dependency-check.zip -d dependency-check; then
-            echo "Looking for dependency-check script under ./dependency-check..."
-            DEP_SCRIPT=$(find dependency-check -type f -name 'dependency-check.sh' -print -quit || true)
-            if [ -n "$DEP_SCRIPT" ]; then
-              echo "Found dependency-check script: $DEP_SCRIPT"
-              chmod +x "$DEP_SCRIPT" || true
-              DEP_DIR=$(dirname "$DEP_SCRIPT")
-              # add the script's directory to PATH to preserve compatibility with existing checks
-              export PATH="$PWD/$DEP_DIR:$PATH"
-              echo "Added $PWD/$DEP_DIR to PATH"
-            else
-              echo "ERROR: dependency-check script not found after unzip"
-              ls -la dependency-check || true
-              # Do not fail the whole build if you want to continue; exit non-zero to fail instead
-              exit 0
-            fi
-          else
-            echo "ERROR: Failed to unzip dependency-check.zip"
-            exit 0
-          fi
+      fi
+    - |
+      # If CLI is not already unzipped on EFS, unzip it there (cached)
+      if [ ! -d "$DC_CLI_DIR" ] || [ -z "$(ls -A "$DC_CLI_DIR" 2>/dev/null)" ]; then
+        echo "Unzipping Dependency-Check CLI to EFS cache: $DC_CLI_DIR"
+        if unzip -q dependency-check.zip -d "$DC_CLI_DIR.tmp" && mv "$DC_CLI_DIR.tmp"/* "$DC_CLI_DIR"/ 2>/dev/null || true; then
+          echo "Dependency-Check CLI extracted to $DC_CLI_DIR"
         else
-          echo "dependency-check.zip not present; skipping dependency-check CLI"
-          exit 0
+          echo "WARNING: Unzip to EFS failed; falling back to workspace unzip"
+          rm -rf "$DC_CLI_DIR.tmp" || true
+          unzip -q dependency-check.zip -d dependency-check || true
+          DC_CLI_DIR="./dependency-check"
         fi
-      - |
-        # Use the absolute script path if available; fallback to command name if present on PATH
-        if [ -n "$DEP_SCRIPT" ] && [ -x "$DEP_SCRIPT" ]; then
-          DC_CMD="$DEP_SCRIPT"
-        elif command -v dependency-check.sh >/dev/null 2>&1; then
-          DC_CMD="$(command -v dependency-check.sh)"
-        else
-          DC_CMD=""
-        fi
+      else
+        echo "Dependency-Check CLI already cached on EFS: $DC_CLI_DIR"
+      fi
+    - |
+      # Find the CLI script. Prefer the cached EFS CLI path.
+      DEP_SCRIPT=$(find "$DC_CLI_DIR" -type f -name 'dependency-check.sh' -print -quit 2>/dev/null || true)
+      if [ -z "$DEP_SCRIPT" ]; then
+        echo "dependency-check.sh not found in EFS cache; searching workspace..."
+        DEP_SCRIPT=$(find . -type f -name 'dependency-check.sh' -print -quit 2>/dev/null || true)
+      fi
+      if [ -z "$DEP_SCRIPT" ]; then
+        echo "ERROR: dependency-check.sh not found anywhere"
+        exit 0
+      fi
+      chmod +x "$DEP_SCRIPT" || true
+      echo "Using dependency-check script: $DEP_SCRIPT"
+    - |
+      # Build command - specify --data to point to EFS cache path
+      DC_CMD="$DEP_SCRIPT"
+      echo "Running Dependency-Check (data dir: $DC_DATA_DIR)..."
+      mkdir -p dependency-check-report || true
 
-        if [ -n "$DC_CMD" ]; then
-          echo "Running Dependency-Check scan using: $DC_CMD"
-          mkdir -p dependency-check-report || true
+      "$DC_CMD" \
+        --project "$Project" \
+        --scan . \
+        --data "$DC_DATA_DIR" \
+        --format "HTML" "JSON" "XML" \
+        --out ./dependency-check-report \
+        --enableRetired \
+        --failOnCVSS 0 \
+        || echo "Dependency-Check completed with exit code: $? (continuing build)"
 
-          # run dependency-check and continue (don't fail pipeline on exit code unless you want to)
-          "$DC_CMD" \
-            --project "$Project" \
-            --scan . \
-            --format "HTML" "JSON" "XML" \
-            --out ./dependency-check-report \
-            --enableRetired \
-            --failOnCVSS 0 \
-            || echo "Dependency-Check completed with exit code: $? (continuing build)"
+      echo "Dependency-Check reports location:"
+      ls -la dependency-check-report/ || echo "No dependency-check-report directory created"
+    - |
+      echo "=== Build Artifacts Summary ==="
+      echo "Current directory contents:"
+      ls -la
+      echo "EFS cache contents (summary):"
+      ls -la "$DC_CLI_DIR" | head -20 || true
+      ls -la "$DC_DATA_DIR" | head -20 || true
+      echo "Dependency-Check report contents:"
+      ls -la dependency-check-report/ || echo "No dependency-check-report directory"
 
-          echo "Dependency-Check reports location:"
-          ls -la dependency-check-report/ || echo "No dependency-check-report directory created"
-        else
-          echo "ERROR: dependency-check.sh command not found (no script available)"
-          echo "PATH: $PATH"
-          # choose whether this should fail the build or not; keeping exit 0 to continue
-          exit 0
-        fi
-      - |
-        echo "=== Build Artifacts Summary ==="
-        echo "Current directory contents:"
-        ls -la
-        echo "Dependency-Check report contents:"
-        ls -la dependency-check-report/ || echo "No dependency-check-report directory"
 
 artifacts:
   files:
