@@ -9,9 +9,7 @@ env:
 
   variables:
     SONAR_ZIP_URL: "https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-7.3.0.5189-linux-x64.zip"
-    DEP_CHECK_ZIP_URL: "https://github.com/jeremylong/DependencyCheck/releases/download/v8.1.2/dependency-check-8.1.2-release.zip"
-    SONAR_POLL_INTERVAL_SECONDS: "5"
-    SONAR_POLL_MAX_SECONDS: "300"
+    DEP_CHECK_ZIP_URL: "https://github.com/dependency-check/DependencyCheck/releases/download/v12.1.9/dependency-check-12.1.9-release.zip"
 
 phases:
   install:
@@ -31,7 +29,7 @@ phases:
         elif command -v yum >/dev/null 2>&1; then
           yum install -y jq curl unzip wget java-11-openjdk-headless
         else
-          echo "No apt-get/yum - ensure jq/curl/unzip/java are available in image"
+          echo "No apt-get/yum found; ensure jq/curl/unzip/wget/java are present in the image"
         fi
       - echo "Downloading SonarScanner..."
       - wget -q "$SONAR_ZIP_URL" -O sonar-scanner.zip || curl -sSL "$SONAR_ZIP_URL" -o sonar-scanner.zip
@@ -41,15 +39,14 @@ phases:
       - chmod +x "$SCANNER_DIR/bin/sonar-scanner"
       - export PATH="$PWD/$SCANNER_DIR/bin:$PATH"
       - echo "sonar-scanner path: $(which sonar-scanner || echo 'not found')"
-      - sonar-scanner --version || echo "sonar-scanner version check failed (but continuing)"
+      - sonar-scanner --version || echo "sonar-scanner version check failed (continuing)"
+      - echo "Pre-build setup complete"
 
   build:
     commands:
       - echo "Build phase ..."
-      - echo "Running SonarScanner..."
       - sonar-scanner -Dsonar.login="$LOGIN" -Dsonar.host.url="$HOST" -Dsonar.projectKey="$Project" -Dsonar.organization="$Organization" 2>&1 | tee sonar-output.txt
-      - sleep 10
-      - echo "Querying Sonar quality gate (your existing step)..."
+      - sleep 10  # keep your existing short wait
       - curl -s "https://sonarcloud.io/api/qualitygates/project_status?projectKey=$Project" > result.json || true
       - cat result.json || true
       - |
@@ -62,38 +59,39 @@ phases:
 
   post_build:
     commands:
-      - echo "Post build phase: run dependency checks and collect reports..."
-      - echo "Downloading OWASP Dependency-Check CLI..."
+      - echo "Post build phase: run OWASP Dependency-Check v12.1.9"
+      - echo "Downloading Dependency-Check..."
       - wget -q "$DEP_CHECK_ZIP_URL" -O dependency-check.zip || curl -sSL "$DEP_CHECK_ZIP_URL" -o dependency-check.zip || true
       - |
         if [ -f dependency-check.zip ]; then
-          unzip -q dependency-check.zip || echo "dependency-check unzip failed";
-          DEP_DIR=$(ls -d dependency-check-* 2>/dev/null | head -n1 || true);
+          unzip -q dependency-check.zip || echo "dependency-check unzip failed"
+          DEP_DIR=$(ls -d dependency-check-* 2>/dev/null | head -n1 || true)
           if [ -n "$DEP_DIR" ]; then
-            chmod +x "$DEP_DIR/bin/dependency-check.sh" || true;
-            export PATH="$PWD/$DEP_DIR/bin:$PATH";
+            chmod +x "$DEP_DIR/bin/dependency-check.sh" || true
+            export PATH="$PWD/$DEP_DIR/bin:$PATH"
+            echo "Dependency-Check dir: $DEP_DIR"
           else
-            echo "dependency-check dir not found after unzip";
+            echo "dependency-check dir not found after unzip; skipping"
           fi
         else
-          echo "dependency-check.zip not found; skipping dependency-check CLI";
+          echo "dependency-check.zip not present; skipping dependency-check CLI"
         fi
       - |
         if command -v dependency-check.sh >/dev/null 2>&1; then
-          echo "Running OWASP Dependency-Check (scanning project root)..."
-          dependency-check.sh --project "$Project" --scan . --format ALL --out ./dependency-check-report || echo "dependency-check finished with non-zero exit"
+          echo "Running Dependency-Check (scanning project root)..."
+          # outputs HTML, XML, JSON in ./dependency-check-report
+          dependency-check.sh --project "$Project" --scan . --format ALL --out ./dependency-check-report || echo "dependency-check finished with non-zero exit code"
           echo "Dependency-Check reports written to ./dependency-check-report/"
         else
           echo "dependency-check.sh not available; skipping OWASP Dependency-Check"
         fi
-      - echo "Listing files for artifacts:"
+      - echo "Post build complete. Listing files:"
       - ls -la
-      - echo "Done."
+      - ls -la dependency-check-report || true
 
 artifacts:
   files:
     - sonar-output.txt
     - result.json
-    - npm-audit.json
     - dependency-check-report/** 
   discard-paths: no

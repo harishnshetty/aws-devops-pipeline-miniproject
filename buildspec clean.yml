@@ -8,64 +8,6 @@ env:
     Project: dev/sonar:Project
 
 
-# phases:
-#   install:
-#     runtime-versions:
-#       nodejs: 20
-#     commands:
-#       - echo "==== install phase ===="
-#       - echo "Installing node deps"
-#       - npm ci
-#       - echo "Installing sonar-scanner CLI"
-#       - npm install -g sonar-scanner
-#       - echo "AWS CLI version:"
-#       - aws --version
-#       - echo "Logging into ECR"
-#       - $(aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin 123456789012.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com) || true
-#   pre_build:
-#     commands:
-#       - echo "==== pre_build phase ===="
-#       - IMAGE_TAG=$CODEBUILD_RESOLVED_SOURCE_VERSION
-#       - echo "IMAGE_TAG=$IMAGE_TAG"
-#   build:
-#     commands:
-#       - echo "==== build phase ===="
-#       - echo "Running unit tests"
-#       - npm test
-#       - echo "Running SonarQube analysis"
-#       # sonar-scanner will pick up SONAR_TOKEN from env; we use -D to provide the key/url/project
-#       - |
-#         set -o pipefail
-#         sonar-scanner \
-#           -Dsonar.projectKey=$SONAR_PROJECT_KEY \
-#           -Dsonar.sources=. \
-#           -Dsonar.host.url=$SONAR_HOST_URL \
-#           -Dsonar.login=$SONAR_TOKEN 2>&1 | tee sonar-output.txt
-#       - echo "Sonar scanner exit code: ${PIPESTATUS[0]}"
-#       - echo "Building Docker image"
-#       - docker build -t $APP_NAME:$IMAGE_TAG .
-#       - docker tag $APP_NAME:$IMAGE_TAG 123456789012.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$APP_NAME:$IMAGE_TAG
-#   post_build:
-#     commands:
-#       - echo "==== post_build phase ===="
-#       - echo "Pushing image to ECR"
-#       - docker push 123456789012.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$APP_NAME:$IMAGE_TAG
-#       - echo "Deploying to staging for DAST"
-#       - jq --arg IMAGE "123456789012.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$APP_NAME:$IMAGE_TAG" '.containerDefinitions[0].image = $IMAGE' ecs-task-def-template.json > ecs-task-def.json
-#       - aws ecs register-task-definition --cli-input-json file://ecs-task-def.json
-#       - aws ecs update-service --cluster staging-cluster --service staging-service --force-new-deployment
-#       - ./wait-for-staging-ready.sh http://staging.internal.example
-#       - echo "Running OWASP ZAP baseline scan"
-#       - docker run --rm owasp/zap2docker-stable zap-baseline.py -t http://staging.internal.example -r zap-baseline.html || true
-#       - echo "Running OWASP ZAP full scan"
-#       - docker run --rm owasp/zap2docker-stable zap-full-scan.py -t http://staging.internal.example -r zap-full.html || true
-# artifacts:
-#   files:
-#     - sonar-output.txt
-#     - zap-baseline.html
-#     - zap-full.html
-#   discard-paths: no
-
 
 phases:
   install:
