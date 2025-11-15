@@ -51,8 +51,10 @@ phases:
           exit 1
         fi
       - chmod +x "$SCANNER_DIR/bin/sonar-scanner"
-      - export PATH="$PWD/$SCANNER_DIR/bin:$PATH"
-      - echo "sonar-scanner path: $(which sonar-scanner || echo 'not found')"
+      - |
+        export PATH="$PWD/$SCANNER_DIR/bin:$PATH"
+      - |
+        echo "sonar-scanner path: $(which sonar-scanner || echo 'not found')"
       - sonar-scanner --version || echo "sonar-scanner version check failed (continuing)"
       - echo "Pre-build setup complete"
 
