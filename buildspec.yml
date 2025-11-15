@@ -9,15 +9,11 @@ env:
 
   variables:
     SONAR_ZIP_URL: "https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-7.3.0.5189-linux-x64.zip"
-    # Set TRIVY_FAIL to "true" if you want the build to fail on HIGH/CRITICAL findings
-    TRIVY_FAIL: "false"
-    TRIVY_FAIL_SEVERITY: "HIGH,CRITICAL"
 
 phases:
   install:
     runtime-versions:
       nodejs: 20
-      java: corretto11
     commands:
       - echo "Install phase ..."
 
@@ -25,24 +21,15 @@ phases:
     commands:
       - echo "Pre build phase ..."
       - |
-        echo "Working dir: $(pwd)"
+        echo "Working dir: $(pwd)"      
       - |
-        # Install system dependencies (apt-get or yum)
         if command -v apt-get >/dev/null 2>&1; then
           apt-get update -y
-          apt-get install -y --no-install-recommends jq curl unzip wget ca-certificates
+          apt-get install -y --no-install-recommends jq curl unzip wget default-jre-headless
         elif command -v yum >/dev/null 2>&1; then
-          yum install -y jq curl unzip wget ca-certificates
+          yum install -y jq curl unzip wget java-11-openjdk-headless
         else
-          echo "No apt-get/yum found; ensure jq/curl/unzip/wget are present in the image"
-        fi
-      - |
-        # Verify Java installation (required by SonarScanner)
-        echo "Checking Java installation..."
-        java -version || echo "Java version check failed (java may be missing)"
-        if ! command -v java >/dev/null 2>&1; then
-          echo "ERROR: Java is required for SonarScanner but not installed"
-          exit 1
+          echo "No apt-get/yum found; ensure jq/curl/unzip/wget/java are present in the image"
         fi
       - echo "Downloading SonarScanner..."
       - wget -q "$SONAR_ZIP_URL" -O sonar-scanner.zip || curl -sSL "$SONAR_ZIP_URL" -o sonar-scanner.zip
@@ -54,31 +41,11 @@ phases:
           ls -la
           exit 1
         fi
-      - chmod +x "$SCANNER_DIR/bin/sonar-scanner" || true
+      - chmod +x "$SCANNER_DIR/bin/sonar-scanner"
       - export PATH="$PWD/$SCANNER_DIR/bin:$PATH"
       - |
         echo "sonar-scanner path: $(which sonar-scanner || echo 'not found')"
       - sonar-scanner --version || echo "sonar-scanner version check failed (continuing)"
-      - |
-        echo "Installing Trivy (Aqua Security)..."
-        # use the official installer script which installs trivy to /usr/local/bin
-        if curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -; then
-          echo "Trivy installed: $(which trivy || echo 'not found')"
-        else
-          echo "Trivy install via script failed — attempting manual download"
-          TRIVY_URL="https://github.com/aquasecurity/trivy/releases/latest/download/trivy_$(uname -s)_$(uname -m).tar.gz"
-          mkdir -p /tmp/trivy-install
-          wget -q "$TRIVY_URL" -O /tmp/trivy-install/trivy.tar.gz || curl -sSL "$TRIVY_URL" -o /tmp/trivy-install/trivy.tar.gz
-          tar -xzf /tmp/trivy-install/trivy.tar.gz -C /tmp/trivy-install
-          mv /tmp/trivy-install/trivy /usr/local/bin/trivy || cp /tmp/trivy-install/trivy /usr/local/bin/trivy || true
-          chmod +x /usr/local/bin/trivy || true
-        fi
-      - |
-        if ! command -v trivy >/dev/null 2>&1; then
-          echo "WARNING: trivy not available in PATH. Trivy scans will be skipped."
-        else
-          echo "Trivy OK: $(trivy --version | head -n1)"
-        fi
       - echo "Pre-build setup complete"
 
   build:
@@ -98,66 +65,12 @@ phases:
 
   post_build:
     commands:
-      - |
-        echo "=== Post build summary & Trivy scans ==="
-      - echo "Current directory contents:"
+      - echo "Post build phase complete"
+      - echo "Listing files:"
       - ls -la
-      - echo "Sonar output (tail):"
-      - tail -n 100 sonar-output.txt || true
-      - echo "Quality Gate result:"
-      - cat result.json || true
-      - |
-        # Prepare reports directory
-        REPORT_DIR="trivy-reports"
-        mkdir -p "$REPORT_DIR"
-        echo "Reports dir: $REPORT_DIR"
-      - |
-        # If trivy is missing, skip scans gracefully
-        if ! command -v trivy >/dev/null 2>&1; then
-          echo "Trivy not installed; skipping Trivy scans"
-        else
-          # Filesystem (SCA) scan - produce JSON and table formats
-          echo "Running Trivy filesystem scan (SCA)..."
-          # JSON output (machine)
-          trivy fs --format json --output "$REPORT_DIR/trivy-fs-report.json" . || true
-          # Human-friendly table (includes severity summary)
-          trivy fs --format table --output "$REPORT_DIR/trivy-fs-report.txt" . || true
-
-          # IaC/config scan
-          echo "Running Trivy config/IaC scan..."
-          trivy config --format json --output "$REPORT_DIR/trivy-config-report.json" . || true
-          trivy config --format table --output "$REPORT_DIR/trivy-config-report.txt" . || true
-
-          # Secrets scan (optional quick check)
-          echo "Running Trivy secrets scan (quick)..."
-          trivy fs --security-checks secret --format json --output "$REPORT_DIR/trivy-secrets-report.json" . || true
-          trivy fs --security-checks secret --format table --output "$REPORT_DIR/trivy-secrets-report.txt" . || true
-
-          # Optional: fail build on HIGH/CRITICAL findings if TRIVY_FAIL is true
-          if [ "$TRIVY_FAIL" = "true" ]; then
-            echo "TRIVY_FAIL is true — failing build on severities: $TRIVY_FAIL_SEVERITY"
-            # Use trivy exit code behaviour to fail if vulnerabilities with given severities exist
-            trivy fs --exit-code 1 --severity "$TRIVY_FAIL_SEVERITY" . || {
-              echo "Trivy found HIGH/CRITICAL vulnerabilities — failing build"
-              # show a short summary
-              trivy fs --severity "$TRIVY_FAIL_SEVERITY" --format table . | sed -n '1,200p' || true
-              exit 1
-            }
-          else
-            echo "TRIVY_FAIL is false — not failing build on Trivy findings"
-          fi
-        fi
-      - |
-        echo "=== Post build: Report summary ==="
-        echo "Trivy reports (if any):"
-        ls -la trivy-reports || echo "No trivy reports"
-        echo "Dependency/Tooling summary:"
-        if command -v trivy >/dev/null 2>&1; then trivy --version || true; fi
-        sonar-scanner --version || true
 
 artifacts:
   files:
     - sonar-output.txt
     - result.json
-    - trivy-reports/**/*
   discard-paths: no
