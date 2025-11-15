@@ -24,6 +24,7 @@ phases:
       - |
         echo "Working dir: $(pwd)"      
       - |
+        # Install system dependencies
         if command -v apt-get >/dev/null 2>&1; then
           apt-get update -y
           apt-get install -y --no-install-recommends jq curl unzip wget default-jre-headless
@@ -31,6 +32,13 @@ phases:
           yum install -y jq curl unzip wget java-11-openjdk-headless
         else
           echo "No apt-get/yum found; ensure jq/curl/unzip/wget/java are present in the image"
+        fi
+      - |
+        # Verify Java installation for Dependency-Check
+        echo "Checking Java installation..."
+        java -version || echo "Java version check failed"
+        if ! command -v java >/dev/null 2>&1; then
+          echo "WARNING: Java is required for Dependency-Check but not installed"
         fi
       - echo "Downloading SonarScanner..."
       - wget -q "$SONAR_ZIP_URL" -O sonar-scanner.zip || curl -sSL "$SONAR_ZIP_URL" -o sonar-scanner.zip
@@ -53,7 +61,7 @@ phases:
     commands:
       - echo "Build phase ..."
       - sonar-scanner -Dsonar.login="$LOGIN" -Dsonar.host.url="$HOST" -Dsonar.projectKey="$Project" -Dsonar.organization="$Organization" 2>&1 | tee sonar-output.txt
-      - sleep 10  # keep your existing short wait
+      - sleep 10
       - curl -s "https://sonarcloud.io/api/qualitygates/project_status?projectKey=$Project" > result.json || true
       - cat result.json || true
       - |
@@ -67,39 +75,78 @@ phases:
   post_build:
     commands:
       - |
-        echo "Post build phase: run OWASP Dependency-Check v12.1.9"
-      - echo "Downloading Dependency-Check..."
-      - wget -q "$DEP_CHECK_ZIP_URL" -O dependency-check.zip || curl -sSL "$DEP_CHECK_ZIP_URL" -o dependency-check.zip || true
+        echo "=== Post build phase: OWASP Dependency-Check v12.1.9 ==="
+      - |
+        echo "Checking for dependency files to scan..."
+        find . -name "package.json" -o -name "pom.xml" -o -name "build.gradle" -o -name "*.csproj" -o -name "requirements.txt" | head -10 || echo "No common dependency files found (this may be normal)"
+      - |
+        echo "Downloading Dependency-Check..."
+        if wget -q "$DEP_CHECK_ZIP_URL" -O dependency-check.zip; then
+          echo "Download via wget successful"
+        elif curl -sSL "$DEP_CHECK_ZIP_URL" -o dependency-check.zip; then
+          echo "Download via curl successful"
+        else
+          echo "ERROR: Failed to download Dependency-Check from $DEP_CHECK_ZIP_URL"
+          echo "Skipping Dependency-Check analysis"
+          exit 0
+        fi
       - |
         if [ -f dependency-check.zip ]; then
-          unzip -q dependency-check.zip || echo "dependency-check unzip failed"
-          DEP_DIR=$(ls -d dependency-check-* 2>/dev/null | head -n1 || true)
-          if [ -n "$DEP_DIR" ]; then
-            chmod +x "$DEP_DIR/bin/dependency-check.sh" || true
-            export PATH="$PWD/$DEP_DIR/bin:$PATH"
-            echo "Dependency-Check dir: $DEP_DIR"
+          echo "Unzipping Dependency-Check..."
+          if unzip -q dependency-check.zip; then
+            DEP_DIR=$(ls -d dependency-check-* 2>/dev/null | head -n1)
+            if [ -n "$DEP_DIR" ] && [ -d "$DEP_DIR" ]; then
+              echo "Dependency-Check directory found: $DEP_DIR"
+              chmod +x "$DEP_DIR/bin/dependency-check.sh"
+              export PATH="$PWD/$DEP_DIR/bin:$PATH"
+              echo "Dependency-Check version check:"
+              "$DEP_DIR/bin/dependency-check.sh" --version || echo "Version check failed"
+            else
+              echo "ERROR: Valid dependency-check directory not found after unzip"
+              ls -la
+              exit 0
+            fi
           else
-            echo "dependency-check dir not found after unzip; skipping"
+            echo "ERROR: Failed to unzip dependency-check.zip"
+            exit 0
           fi
         else
           echo "dependency-check.zip not present; skipping dependency-check CLI"
+          exit 0
         fi
       - |
         if command -v dependency-check.sh >/dev/null 2>&1; then
-          echo "Running Dependency-Check (scanning project root)..."
-          # outputs HTML, XML, JSON in ./dependency-check-report
-          dependency-check.sh --project "$Project" --scan . --format ALL --out ./dependency-check-report || echo "dependency-check finished with non-zero exit code"
-          echo "Dependency-Check reports written to ./dependency-check-report/"
+          echo "Running Dependency-Check scan..."
+          # Create report directory first
+          mkdir -p dependency-check-report
+          
+          # Run dependency check with specific formats and continue on error
+          dependency-check.sh \
+            --project "$Project" \
+            --scan . \
+            --format "HTML" "JSON" "XML" \
+            --out ./dependency-check-report \
+            --enableRetired \
+            --failOnCVSS 0 \
+            || echo "Dependency-Check completed with exit code: $? (continuing build)"
+          
+          echo "Dependency-Check reports location:"
+          ls -la dependency-check-report/ || echo "No dependency-check-report directory created"
         else
-          echo "dependency-check.sh not available; skipping OWASP Dependency-Check"
+          echo "ERROR: dependency-check.sh command not found in PATH"
+          echo "PATH: $PATH"
+          exit 0
         fi
-      - echo "Post build complete. Listing files:"
-      - ls -la
-      - ls -la dependency-check-report || true
+      - |
+        echo "=== Build Artifacts Summary ==="
+        echo "Current directory contents:"
+        ls -la
+        echo "Dependency-Check report contents:"
+        ls -la dependency-check-report/ || echo "No dependency-check-report directory"
 
 artifacts:
   files:
     - sonar-output.txt
     - result.json
-    - dependency-check-report/** 
+    - dependency-check-report/**/*
   discard-paths: no
