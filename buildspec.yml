@@ -9,7 +9,7 @@ env:
 
   variables:
     SONAR_ZIP_URL: "https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-7.3.0.5189-linux-x64.zip"
-    DEP_CHECK_ZIP_URL: "https://github.com/dependency-check/DependencyCheck/releases/download/v12.1.9/dependency-check-12.1.9-release.zip"
+    DEP_CHECK_ZIP_URL: "https://github.com/jeremylong/DependencyCheck/releases/download/v8.1.2/dependency-check-8.1.2-release.zip"
     SONAR_POLL_INTERVAL_SECONDS: "5"
     SONAR_POLL_MAX_SECONDS: "300"
 
@@ -33,7 +33,6 @@ phases:
         else
           echo "No apt-get/yum - ensure jq/curl/unzip/java are available in image"
         fi
-
       - echo "Downloading SonarScanner..."
       - wget -q "$SONAR_ZIP_URL" -O sonar-scanner.zip || curl -sSL "$SONAR_ZIP_URL" -o sonar-scanner.zip
       - unzip -q sonar-scanner.zip
@@ -49,7 +48,7 @@ phases:
       - echo "Build phase ..."
       - echo "Running SonarScanner..."
       - sonar-scanner -Dsonar.login="$LOGIN" -Dsonar.host.url="$HOST" -Dsonar.projectKey="$Project" -Dsonar.organization="$Organization" 2>&1 | tee sonar-output.txt
-      - sleep 10  # keep your existing short wait
+      - sleep 10
       - echo "Querying Sonar quality gate (your existing step)..."
       - curl -s "https://sonarcloud.io/api/qualitygates/project_status?projectKey=$Project" > result.json || true
       - cat result.json || true
@@ -66,7 +65,8 @@ phases:
       - echo "Post build phase: run dependency checks and collect reports..."
       - echo "Downloading OWASP Dependency-Check CLI..."
       - wget -q "$DEP_CHECK_ZIP_URL" -O dependency-check.zip || curl -sSL "$DEP_CHECK_ZIP_URL" -o dependency-check.zip || true
-      - if [ -f dependency-check.zip ]; then
+      - |
+        if [ -f dependency-check.zip ]; then
           unzip -q dependency-check.zip || echo "dependency-check unzip failed";
           DEP_DIR=$(ls -d dependency-check-* 2>/dev/null | head -n1 || true);
           if [ -n "$DEP_DIR" ]; then
@@ -79,10 +79,8 @@ phases:
           echo "dependency-check.zip not found; skipping dependency-check CLI";
         fi
       - |
-        # Run OWASP Dependency-Check if available
         if command -v dependency-check.sh >/dev/null 2>&1; then
           echo "Running OWASP Dependency-Check (scanning project root)..."
-          # This may download NVD DB on first run; allow it to continue even if non-zero exit
           dependency-check.sh --project "$Project" --scan . --format ALL --out ./dependency-check-report || echo "dependency-check finished with non-zero exit"
           echo "Dependency-Check reports written to ./dependency-check-report/"
         else
@@ -96,5 +94,6 @@ artifacts:
   files:
     - sonar-output.txt
     - result.json
-    - dependency-check-report/**    # includes HTML/JSON if generated
+    - npm-audit.json
+    - dependency-check-report/** 
   discard-paths: no
