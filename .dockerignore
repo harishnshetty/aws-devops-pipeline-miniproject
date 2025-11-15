@@ -1,0 +1,12 @@
+sonar-scanner.zip
+sonar-scanner-7.3.0.5189-linux-x64
+sonar-project.properties
+sonar-output.txt
+result.json
+*.yml
+Jenkinsfile
+node_modules
+.DS_Store
+.git
+.vscode
+.gitignore

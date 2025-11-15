@@ -25,11 +25,11 @@ phases:
       - |
         if command -v apt-get >/dev/null 2>&1; then
           apt-get update -y
-          apt-get install -y --no-install-recommends jq curl unzip wget default-jre-headless
+          apt-get install -y --no-install-recommends jq curl unzip wget
         elif command -v yum >/dev/null 2>&1; then
-          yum install -y jq curl unzip wget java-11-openjdk-headless
+          yum install -y jq curl unzip wget
         else
-          echo "No apt-get/yum found; ensure jq/curl/unzip/wget/java are present in the image"
+          echo "No apt-get/yum found; ensure jq/curl/unzip/wget are present in the image"
         fi
       - echo "Downloading SonarScanner..."
       - wget -q "$SONAR_ZIP_URL" -O sonar-scanner.zip || curl -sSL "$SONAR_ZIP_URL" -o sonar-scanner.zip
@@ -65,12 +65,73 @@ phases:
 
   post_build:
     commands:
-      - echo "Post build phase complete"
-      - echo "Listing files:"
+      - |
+        echo "Post build phase: Installing and running Trivy file scan"
+      - echo "Installing Trivy using official installation script..."
+      - |
+        # Install Trivy using official script
+        curl -sSL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh
+        mv trivy /usr/local/bin/
+        chmod +x /usr/local/bin/trivy
+        
+        # Verify installation
+        trivy --version
+      - |
+        echo "Running Trivy filesystem scan..."
+        # Create reports directory
+        mkdir -p trivy-reports
+        
+        # Run Trivy filesystem scan with multiple output formats
+        trivy filesystem . \
+          --format json \
+          --output trivy-reports/trivy-filesystem.json \
+          --severity HIGH,CRITICAL \
+          --exit-code 0 || echo "Trivy scan completed with findings"
+        
+        # Also generate HTML report (need to download template first)
+        echo "Downloading HTML template..."
+        wget -q https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/html.tpl -O trivy-reports/html.tpl || curl -sSL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/html.tpl -o trivy-reports/html.tpl
+        
+        trivy filesystem . \
+          --format template \
+          --template "@/trivy-reports/html.tpl" \
+          --output trivy-reports/trivy-filesystem.html \
+          --severity HIGH,CRITICAL \
+          --exit-code 0 || true
+        
+        # Generate SARIF report
+        trivy filesystem . \
+          --format sarif \
+          --output trivy-reports/trivy-filesystem.sarif \
+          --severity HIGH,CRITICAL \
+          --exit-code 0 || true
+        
+        echo "Trivy filesystem scan completed"
+        echo "Reports available in trivy-reports/"
+      - |
+        # Display summary of findings
+        if [ -f "trivy-reports/trivy-filesystem.json" ]; then
+          echo "=== Trivy Scan Summary ==="
+          COUNT=$(jq '.Results | length' trivy-reports/trivy-filesystem.json)
+          VULNERABILITIES=$(jq '[.Results[].Vulnerabilities[]?] | length' trivy-reports/trivy-filesystem.json)
+          echo "Scanned targets: $COUNT"
+          echo "Vulnerabilities found: $VULNERABILITIES"
+          
+          # Show critical/high counts
+          CRITICAL=$(jq '[.Results[].Vulnerabilities[]? | select(.Severity == "CRITICAL")] | length' trivy-reports/trivy-filesystem.json)
+          HIGH=$(jq '[.Results[].Vulnerabilities[]? | select(.Severity == "HIGH")] | length' trivy-reports/trivy-filesystem.json)
+          echo "CRITICAL: $CRITICAL"
+          echo "HIGH: $HIGH"
+        else
+          echo "Trivy JSON report not found"
+        fi
+      - echo "Post build complete. Listing files:"
       - ls -la
+      - ls -la trivy-reports/ || true
 
 artifacts:
   files:
     - sonar-output.txt
     - result.json
+    - trivy-reports/**
   discard-paths: no
