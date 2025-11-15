@@ -117,9 +117,11 @@ phases:
 
   post_build:
     commands:
-      - echo "Post build phase: push image and run Trivy"
+      - |
+        echo "Post build phase: push image and run Trivy"
 
-      - echo "Pushing Docker image to ECR: ${IMAGE_FULLNAME}"
+      - |
+        echo "Pushing Docker image to ECR: ${IMAGE_FULLNAME}"
       - docker push ${IMAGE_FULLNAME}
 
       - |
