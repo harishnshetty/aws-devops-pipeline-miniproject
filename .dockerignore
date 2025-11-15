@@ -10,3 +10,5 @@ node_modules
 .git
 .vscode
 .gitignore
+trivy.tar.gz
+trivy-reports/**
