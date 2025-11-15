@@ -9,10 +9,10 @@ env:
 
   variables:
     SONAR_ZIP_URL: "https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-7.3.0.5189-linux-x64.zip"
-    AWS_ACCOUNT_ID: "970378220457"
-    AWS_REGION: "ap-south-1"
-    ECR_REPO: "zomato"
-    IMAGE_NAME: "970378220457.dkr.ecr.ap-south-1.amazonaws.com/zomato"
+    # Change IMAGE_REPO_NAME if required
+    IMAGE_REPO_NAME: "zomato"
+    # Optional: you can override IMAGE_TAG externally (e.g., CODEBUILD_RESOLVED_SOURCE_VERSION short sha)
+    IMAGE_TAG: "" 
 
 phases:
   install:
@@ -20,28 +20,16 @@ phases:
       nodejs: 20
     commands:
       - echo "Install phase ..."
-      - |
-        # Install Docker
-        if command -v apt-get >/dev/null 2>&1; then
-          apt-get update -y
-          apt-get install -y --no-install-recommends docker.io
-        elif command -v yum >/dev/null 2>&1; then
-          yum install -y docker
-        else
-          echo "No apt-get/yum found; ensure docker is present in the image"
-        fi
-      - |
-        # Start Docker service
-        service docker start || systemctl start docker
-        docker --version
+      - echo "Logging into ECR (will attempt later with dynamic account id)"
+      - aws --version || true
 
   pre_build:
     commands:
       - echo "Pre build phase ..."
+      - echo "Working dir: $(pwd)"
+
       - |
-        echo "Working dir: $(pwd)"      
-      - |
-        # Install required tools
+        # Install utilities if package manager available
         if command -v apt-get >/dev/null 2>&1; then
           apt-get update -y
           apt-get install -y --no-install-recommends jq curl unzip wget
@@ -50,6 +38,7 @@ phases:
         else
           echo "No apt-get/yum found; ensure jq/curl/unzip/wget are present in the image"
         fi
+
       - echo "Downloading SonarScanner..."
       - wget -q "$SONAR_ZIP_URL" -O sonar-scanner.zip || curl -sSL "$SONAR_ZIP_URL" -o sonar-scanner.zip
       - unzip -q sonar-scanner.zip
@@ -62,131 +51,128 @@ phases:
         fi
       - chmod +x "$SCANNER_DIR/bin/sonar-scanner"
       - export PATH="$PWD/$SCANNER_DIR/bin:$PATH"
-      - |
-        echo "sonar-scanner path: $(which sonar-scanner || echo 'not found')"
+      - echo "sonar-scanner path: $(which sonar-scanner || echo 'not found')"
       - sonar-scanner --version || echo "sonar-scanner version check failed (continuing)"
-      
-      - |
-        # Login to ECR
-        echo "Logging in to ECR..."
-        aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
-        
-        # Create ECR repository if it doesn't exist
-        aws ecr describe-repositories --repository-names $ECR_REPO --region $AWS_REGION || \
-        aws ecr create-repository --repository-name $ECR_REPO --region $AWS_REGION
-        
-        echo "ECR setup complete"
       - echo "Pre-build setup complete"
 
   build:
     commands:
       - echo "Build phase ..."
+
       - |
-        # Build Docker image with multiple tags
-        TIMESTAMP=$(date +%Y%m%d%H%M%S)
-        COMMIT_HASH=$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c 1-7)
-        BUILD_ID=$CODEBUILD_BUILD_ID
-        LATEST_TAG="latest"
-        TIMESTAMP_TAG="$TIMESTAMP"
-        COMMIT_TAG="$COMMIT_HASH"
-        BUILD_TAG="build-${CODEBUILD_BUILD_NUMBER:-0}"
-        
-        echo "Building Docker image with tags:"
-        echo "- $LATEST_TAG"
-        echo "- $TIMESTAMP_TAG" 
-        echo "- $COMMIT_TAG"
-        echo "- $BUILD_TAG"
-        
-        # Build the image
-        docker build -t $IMAGE_NAME:$LATEST_TAG \
-                     -t $IMAGE_NAME:$TIMESTAMP_TAG \
-                     -t $IMAGE_NAME:$COMMIT_TAG \
-                     -t $IMAGE_NAME:$BUILD_TAG .
-        
-        echo "Docker image built successfully"
+        # Run SonarScanner
+        echo "Running SonarScanner..."
+        sonar-scanner -Dsonar.login="$LOGIN" \
+                      -Dsonar.host.url="$HOST" \
+                      -Dsonar.projectKey="$Project" \
+                      -Dsonar.organization="$Organization" 2>&1 | tee sonar-output.txt || true
+
+      - sleep 10
+      - curl -s "https://sonarcloud.io/api/qualitygates/project_status?projectKey=$Project" > result.json || true
+      - cat result.json || true
+
       - |
-        # Run security scan on the built image with Trivy
-        echo "Running Trivy security scan on Docker image..."
-        mkdir -p trivy-reports
-        
-        # Install Trivy
-        TRIVY_VERSION=$(curl -s https://api.github.com/repos/aquasecurity/trivy/releases/latest | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
-        echo "Downloading Trivy version: $TRIVY_VERSION"
-        
-        wget -q "https://github.com/aquasecurity/trivy/releases/download/${TRIVY_VERSION}/trivy_${TRIVY_VERSION#v}_Linux-64bit.tar.gz" -O trivy.tar.gz || \
-        curl -sSL "https://github.com/aquasecurity/trivy/releases/download/${TRIVY_VERSION}/trivy_${TRIVY_VERSION#v}_Linux-64bit.tar.gz" -o trivy.tar.gz
-        
-        tar -xzf trivy.tar.gz
-        chmod +x trivy
-        ./trivy --version
-        
-        # Scan the Docker image
-        ./trivy image $IMAGE_NAME:$LATEST_TAG \
-          --format json \
-          --output trivy-reports/trivy-image-scan.json \
-          --severity HIGH,CRITICAL \
-          --exit-code 0 || echo "Trivy image scan completed with findings"
-        
-        # Also generate table output
-        ./trivy image $IMAGE_NAME:$LATEST_TAG \
-          --format table \
-          --severity HIGH,CRITICAL \
-          --exit-code 0 || true
-          
-        echo "Trivy image scan completed"
+        # Fail build if Sonar quality gate is ERROR
+        if [ "$(jq -r '.projectStatus.status' result.json 2>/dev/null)" = "ERROR" ]; then
+          echo "Quality Gate failed! Build will be marked as failed."
+          exit 1
+        else
+          echo "Quality Gate passed or not present."
+        fi
+
+      - echo "Preparing Docker/ECR variables..."
+      - AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
       - |
-        # Run SonarQube scan
-        echo "Running SonarQube scan..."
-        sonar-scanner -Dsonar.login="$LOGIN" -Dsonar.host.url="$HOST" -Dsonar.projectKey="$Project" -Dsonar.organization="$Organization" 2>&1 | tee sonar-output.txt
-        sleep 10
-        curl -s "https://sonarcloud.io/api/qualitygates/project_status?projectKey=$Project" > result.json || true
-        cat result.json || true
-        - |
-          if [ "$(jq -r '.projectStatus.status' result.json 2>/dev/null)" = "ERROR" ]; then
-            echo "Quality Gate failed! Build will be marked as failed."
-            exit 1
+        # If IMAGE_TAG variable was not provided, use CodeBuild short sha fallback
+        if [ -z "$IMAGE_TAG" ]; then
+          if [ -n "$CODEBUILD_RESOLVED_SOURCE_VERSION" ]; then
+            IMAGE_TAG=${CODEBUILD_RESOLVED_SOURCE_VERSION:0:7}
           else
-            echo "Quality Gate passed or not present."
+            IMAGE_TAG=$(date +%Y%m%d%H%M%S)
           fi
+        fi
+      - export IMAGE_TAG
+      - IMAGE_REPO_NAME=${IMAGE_REPO_NAME}
+      - export IMAGE_REPO_NAME
+      - IMAGE_FULLNAME=${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com/${IMAGE_REPO_NAME}:${IMAGE_TAG}
+      - export IMAGE_FULLNAME
+      - echo "Image will be: ${IMAGE_FULLNAME}"
+
+      - echo "Logging into ECR..."
+      - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com
+
+      - echo "Ensure ECR repository exists..."
+      - aws ecr describe-repositories --repository-names ${IMAGE_REPO_NAME} --region $AWS_DEFAULT_REGION || aws ecr create-repository --repository-name ${IMAGE_REPO_NAME} --region $AWS_DEFAULT_REGION
+
+      - echo "Building Docker image..."
+      - docker build -t ${IMAGE_REPO_NAME}:${IMAGE_TAG} .
+
+      - echo "Tagging image..."
+      - docker tag ${IMAGE_REPO_NAME}:${IMAGE_TAG} ${IMAGE_FULLNAME}
 
   post_build:
     commands:
+      - echo "Post build phase: push image and run Trivy"
+
+      - echo "Pushing Docker image to ECR: ${IMAGE_FULLNAME}"
+      - docker push ${IMAGE_FULLNAME}
+
       - |
-        echo "Post build phase: Pushing Docker image to ECR"
-        # Push all tags to ECR
-        echo "Pushing Docker image to ECR..."
-        docker push $IMAGE_NAME:latest
-        docker push $IMAGE_NAME:$TIMESTAMP_TAG
-        docker push $IMAGE_NAME:$COMMIT_TAG
-        docker push $IMAGE_NAME:$BUILD_TAG
-        
-        echo "Docker images pushed successfully to ECR"
-        
-        # Output image details
-        echo "=== Image Push Summary ==="
-        echo "Latest: $IMAGE_NAME:latest"
-        echo "Timestamp: $IMAGE_NAME:$TIMESTAMP_TAG"
-        echo "Commit: $IMAGE_NAME:$COMMIT_TAG"
-        echo "Build: $IMAGE_NAME:$BUILD_TAG"
-        
-        # Save image tags as environment variables for downstream use
-        echo "IMAGE_TAG_LATEST=$IMAGE_NAME:latest" >> image_tags.env
-        echo "IMAGE_TAG_TIMESTAMP=$IMAGE_NAME:$TIMESTAMP_TAG" >> image_tags.env
-        echo "IMAGE_TAG_COMMIT=$IMAGE_NAME:$COMMIT_TAG" >> image_tags.env
-        echo "IMAGE_TAG_BUILD=$IMAGE_NAME:$BUILD_TAG" >> image_tags.env
-      - |
-        # Display Trivy scan summary
-        if [ -f "trivy-reports/trivy-image-scan.json" ]; then
-          echo "=== Trivy Image Scan Summary ==="
-          if command -v jq >/dev/null 2>&1; then
-            VULNERABILITIES=$(jq '.Results[0].Vulnerabilities | length' trivy-reports/trivy-image-scan.json 2>/dev/null || echo "0")
-            CRITICAL=$(jq '[.Results[0].Vulnerabilities[]? | select(.Severity == "CRITICAL")] | length' trivy-reports/trivy-image-scan.json 2>/dev/null || echo "0")
-            HIGH=$(jq '[.Results[0].Vulnerabilities[]? | select(.Severity == "HIGH")] | length' trivy-reports/trivy-image-scan.json 2>/dev/null || echo "0")
-            echo "Vulnerabilities found: $VULNERABILITIES"
-            echo "CRITICAL: $CRITICAL"
-            echo "HIGH: $HIGH"
-          fi
+        echo "Installing Trivy..."
+        set -e
+        TRIVY_API_JSON="https://api.github.com/repos/aquasecurity/trivy/releases/latest"
+        TRIVY_VERSION=$(curl -s $TRIVY_API_JSON | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/' || echo "")
+        if [ -z "$TRIVY_VERSION" ]; then
+          echo "Could not detect Trivy latest version via GitHub API; attempting fallback to v0.57.0"
+          TRIVY_VERSION="v0.57.0"
         fi
+        echo "Using Trivy version: $TRIVY_VERSION"
+        wget -q "https://github.com/aquasecurity/trivy/releases/download/${TRIVY_VERSION}/trivy_${TRIVY_VERSION#v}_Linux-64bit.tar.gz" -O trivy.tar.gz || curl -sSL "https://github.com/aquasecurity/trivy/releases/download/${TRIVY_VERSION}/trivy_${TRIVY_VERSION#v}_Linux-64bit.tar.gz" -o trivy.tar.gz
+        tar -xzf trivy.tar.gz || true
+        chmod +x trivy || true
+        mv -f trivy /usr/local/bin/ || mkdir -p /usr/local/bin && mv -f trivy /usr/local/bin/ || true
+        echo "Trivy version:"
+        trivy --version || true
+        set +e
+
+      - |
+        echo "Running Trivy filesystem scan..."
+        mkdir -p trivy-reports
+        trivy filesystem . \
+          --format json \
+          --output trivy-reports/trivy-filesystem.json \
+          --severity HIGH,CRITICAL \
+          --exit-code 0 || echo "Trivy filesystem scan completed with findings (non-zero exit code)"
+
+        trivy filesystem . \
+          --format sarif \
+          --output trivy-reports/trivy-filesystem.sarif \
+          --severity HIGH,CRITICAL \
+          --exit-code 0 || true
+
+        trivy filesystem . \
+          --format table \
+          --severity HIGH,CRITICAL \
+          --exit-code 0 || true
+
+        echo "Trivy filesystem scan completed. Reports in trivy-reports/"
+
+      - |
+        # Display summary of Trivy findings (if JSON exists)
+        if [ -f "trivy-reports/trivy-filesystem.json" ]; then
+          echo "=== Trivy Scan Summary ==="
+          COUNT=$(jq '.Results | length' trivy-reports/trivy-filesystem.json 2>/dev/null || echo "0")
+          VULNERABILITIES=$(jq '[.Results[].Vulnerabilities[]?] | length' trivy-reports/trivy-filesystem.json 2>/dev/null || echo "0")
+          echo "Scanned targets: $COUNT"
+          echo "Vulnerabilities found: $VULNERABILITIES"
+          CRITICAL=$(jq '[.Results[].Vulnerabilities[]? | select(.Severity == "CRITICAL")] | length' trivy-reports/trivy-filesystem.json 2>/dev/null || echo "0")
+          HIGH=$(jq '[.Results[].Vulnerabilities[]? | select(.Severity == "HIGH")] | length' trivy-reports/trivy-filesystem.json 2>/dev/null || echo "0")
+          echo "CRITICAL: $CRITICAL"
+          echo "HIGH: $HIGH"
+        else
+          echo "Trivy JSON report not found or empty"
+        fi
+
       - echo "Post build complete. Listing files:"
       - ls -la
       - ls -la trivy-reports/ || true
@@ -196,5 +182,4 @@ artifacts:
     - sonar-output.txt
     - result.json
     - trivy-reports/**
-    - image_tags.env
   discard-paths: no
