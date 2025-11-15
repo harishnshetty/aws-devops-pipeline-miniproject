@@ -46,7 +46,7 @@ phases:
     commands:
       - echo "Build phase ..."
       - sonar-scanner -Dsonar.login="$LOGIN" -Dsonar.host.url="$HOST" -Dsonar.projectKey="$Project" -Dsonar.organization="$Organization" 2>&1 | tee sonar-output.txt
-      - sleep 10  # short wait for Sonar to start processing
+      - sleep 10  # keep your existing short wait
       - curl -s "https://sonarcloud.io/api/qualitygates/project_status?projectKey=$Project" > result.json || true
       - cat result.json || true
       - |
@@ -79,6 +79,7 @@ phases:
       - |
         if command -v dependency-check.sh >/dev/null 2>&1; then
           echo "Running Dependency-Check (scanning project root)..."
+          # outputs HTML, XML, JSON in ./dependency-check-report
           dependency-check.sh --project "$Project" --scan . --format ALL --out ./dependency-check-report || echo "dependency-check finished with non-zero exit code"
           echo "Dependency-Check reports written to ./dependency-check-report/"
         else
