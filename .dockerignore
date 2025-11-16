@@ -5,10 +5,11 @@ sonar-output.txt
 result.json
 *.yml
 Jenkinsfile
-node_modules
 .DS_Store
 .git
 .vscode
 .gitignore
 trivy.tar.gz
 trivy-reports/**
+zap-reports/**
+zap.yml
