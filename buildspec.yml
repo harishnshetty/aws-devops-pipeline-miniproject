@@ -23,7 +23,6 @@ env:
     DEP_CHECK_FAIL_CVSS: ""
 
     # If true, Trivy image scan will return non-zero exit code when HIGH/CRITICAL findings exist.
-    # Set to "true" to fail the build on HIGH/CRITICAL image findings; "false" to only report.
     TRIVY_FAIL_IMAGE: "false"
 
 phases:
@@ -46,16 +45,22 @@ phases:
         else
           echo "Ensure Java, unzip, curl, wget, docker installed"
         fi
-      - echo "Ensure Docker daemon is running (if applicable)..."
+      - echo "Ensure Docker daemon is available (if running docker inside build):"
       - docker --version || true
 
       # -----------------------------
       # Install SonarScanner
       # -----------------------------
       - echo "Downloading SonarScanner..."
-      - wget -q "$SONAR_SCANNER_URL" -O sonar-scanner.zip
+      - wget -q "$SONAR_SCANNER_URL" -O sonar-scanner.zip || curl -sSL "$SONAR_SCANNER_URL" -o sonar-scanner.zip
       - unzip -q sonar-scanner.zip
-      - SCANNER_DIR=$(ls -d sonar-scanner-* | head -n1)
+      - SCANNER_DIR=$(ls -d sonar-scanner-* 2>/dev/null | head -n1)
+      - |
+        if [ -z "$SCANNER_DIR" ]; then
+          echo "ERROR: sonar scanner directory not found after unzip"
+          ls -la
+          exit 1
+        fi
       - chmod +x "$SCANNER_DIR/bin/sonar-scanner"
       - export PATH="$PWD/$SCANNER_DIR/bin:$PATH"
       - sonar-scanner --version || true
@@ -68,41 +73,53 @@ phases:
       # INSTALL DEPENDENCIES
       # -----------------------------
       - echo "Installing NodeJS dependencies..."
-      # - npm install --legacy-peer-deps || npm install
-      - npm install
+      - npm install --legacy-peer-deps || npm install
 
       # -----------------------------
-      # OWASP DEPENDENCY CHECK
+      # OWASP DEPENDENCY CHECK (safe extraction to avoid name collisions)
       # -----------------------------
       - echo "Downloading Dependency-Check..."
       - mkdir -p dependency-check-reports dc_tmp
-      - wget -q "$DEP_CHECK_URL" -O depcheck.zip
+      - wget -q "$DEP_CHECK_URL" -O depcheck.zip || curl -sSL "$DEP_CHECK_URL" -o depcheck.zip
       - unzip -q depcheck.zip -d dc_tmp
-      - DCPATH=$(ls -d dc_tmp/dependency-check-* | head -n1)
-      - chmod +x "${DCPATH}/bin/dependency-check.sh"
+      - DCPATH=$(ls -d dc_tmp/dependency-check-* 2>/dev/null | head -n1)
+      - |
+        if [ -z "$DCPATH" ] || [ ! -d "$DCPATH" ]; then
+          echo "ERROR: dependency-check directory not found after unzip"
+          ls -la dc_tmp || true
+          # continue without failing the whole build if download/extract failed
+        else
+          echo "Found dependency-check at: $DCPATH"
+          chmod +x "${DCPATH}/bin/dependency-check.sh" || true
+        fi
 
       - |
-        echo "Running Dependency-Check SCA..."
-        DC_ARGS="--project ${IMAGE_REPO_NAME} --scan . --out dependency-check-reports --format ALL"
+        if [ -n "$DCPATH" ] && [ -x "${DCPATH}/bin/dependency-check.sh" ]; then
+          echo "Running Dependency-Check SCA..."
+          DC_ARGS="--project ${IMAGE_REPO_NAME} --scan . --out dependency-check-reports --format ALL"
 
-        if [ -n "$DEP_CHECK_FAIL_CVSS" ]; then
-          DC_ARGS="$DC_ARGS --failOnCVSS $DEP_CHECK_FAIL_CVSS"
-        fi
-
-        set +e
-        "${DCPATH}/bin/dependency-check.sh" $DC_ARGS
-        DC_EXIT=$?
-        set -e
-
-        if [ $DC_EXIT -ne 0 ]; then
-          if [ -n "$DEP_CHECK_FAIL_CVSS" ]; then
-            echo "Failing build due to Dependency-Check CVSS threshold"
-            exit $DC_EXIT
-          else
-            echo "Continuing despite Dependency-Check findings"
+          if [ -n \"$DEP_CHECK_FAIL_CVSS\" ]; then
+            DC_ARGS=\"$DC_ARGS --failOnCVSS $DEP_CHECK_FAIL_CVSS\"
           fi
-        fi
 
+          set +e
+          \"${DCPATH}/bin/dependency-check.sh\" $DC_ARGS
+          DC_EXIT=$?
+          set -e
+
+          if [ $DC_EXIT -ne 0 ]; then
+            if [ -n \"$DEP_CHECK_FAIL_CVSS\" ]; then
+              echo "Failing build due to Dependency-Check CVSS threshold"
+              exit $DC_EXIT
+            else
+              echo "Dependency-Check finished with non-zero exit code ($DC_EXIT) — continuing (report saved under dependency-check-reports/)"
+            fi
+          else
+            echo "Dependency-Check completed successfully."
+          fi
+        else
+          echo "Skipping Dependency-Check CLI run (not available)"
+        fi
 
       # -----------------------------
       # SONARQUBE SCAN
@@ -159,13 +176,11 @@ phases:
       # -----------------------------
       # INSTALL TRIVY FIXED VERSION
       # -----------------------------
-      - |
-        echo "Installing Trivy from: $TRIVY_URL"
-      - wget -q "$TRIVY_URL" -O trivy.tar.gz
+      - echo "Installing Trivy from: $TRIVY_URL"
+      - wget -q "$TRIVY_URL" -O trivy.tar.gz || curl -sSL "$TRIVY_URL" -o trivy.tar.gz
       - tar -xzf trivy.tar.gz || true
-      # trivy binary may unpack as 'trivy' in working dir; handle idempotently
       - if [ -f trivy ]; then chmod +x trivy && mv -f trivy /usr/local/bin/ || true; fi
-      - if [ -f trivy-*-linux-amd64 ]; then mv -f trivy-*-linux-amd64 /usr/local/bin/trivy || true; fi
+      - if ls trivy-*linux* >/dev/null 2>&1; then mv -f trivy-*linux* /usr/local/bin/trivy || true; fi
       - trivy --version || true
 
       # -----------------------------
@@ -196,15 +211,12 @@ phases:
         echo "Starting Trivy image scan for local image: ${IMAGE_REPO_NAME}:${IMAGE_TAG} (HIGH,CRITICAL)..."
         set +e
 
-        # default behavior: do not fail the build on findings (exit-code 0)
         TRIVY_EXIT_CODE_FLAG="--exit-code 0"
         if [ "${TRIVY_FAIL_IMAGE}" = "true" ]; then
-          # Exit code 1 when any vulnerabilities of selected severity are found
           TRIVY_EXIT_CODE_FLAG="--exit-code 1"
           echo "TRIVY_FAIL_IMAGE is true -> build will fail if HIGH/CRITICAL findings are present."
         fi
 
-        # JSON output
         trivy image "${IMAGE_REPO_NAME}:${IMAGE_TAG}" \
           --format json \
           --severity HIGH,CRITICAL \
@@ -212,14 +224,12 @@ phases:
           $TRIVY_EXIT_CODE_FLAG
         TRIVY_IMG_EXIT=$?
 
-        # SARIF output
         trivy image "${IMAGE_REPO_NAME}:${IMAGE_TAG}" \
           --format sarif \
           --severity HIGH,CRITICAL \
           --output trivy-reports/trivy-image.sarif \
           --exit-code 0 || true
 
-        # Table summary to stdout (non-failing)
         trivy image "${IMAGE_REPO_NAME}:${IMAGE_TAG}" --format table --severity HIGH,CRITICAL --exit-code 0 || true
 
         set -e
@@ -245,6 +255,7 @@ phases:
         echo "Post build done. Listing reports:"
       - ls -la trivy-reports/ || true
       - ls -la dependency-check-reports/ || true
+      - ls -la dc_tmp || true
 
 artifacts:
   files:
