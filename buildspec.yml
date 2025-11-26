@@ -241,7 +241,8 @@ phases:
       - export IMAGE_TAG
 
       - IMAGE_FULLNAME="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com/${IMAGE_REPO_NAME}:${IMAGE_TAG}"
-      - echo "Image full name: ${IMAGE_FULLNAME}"
+      - |
+        echo "Image full name: ${IMAGE_FULLNAME}"
 
       - aws ecr get-login-password --region $AWS_DEFAULT_REGION \
         | docker login --username AWS --password-stdin \
