@@ -68,22 +68,22 @@ phases:
       # INSTALL DEPENDENCIES
       # -----------------------------
       - echo "Installing NodeJS dependencies..."
-      - npm install --legacy-peer-deps || npm install
+      # - npm install --legacy-peer-deps || npm install
+      - npm install
 
       # -----------------------------
       # OWASP DEPENDENCY CHECK
       # -----------------------------
       - echo "Downloading Dependency-Check..."
-      - mkdir -p dependency-check-reports
+      - mkdir -p dependency-check-reports dc_tmp
       - wget -q "$DEP_CHECK_URL" -O depcheck.zip
-      - unzip -q depcheck.zip
-      - DCPATH=$(ls -d dependency-check-* | head -n1)
+      - unzip -q depcheck.zip -d dc_tmp
+      - DCPATH=$(ls -d dc_tmp/dependency-check-* | head -n1)
       - chmod +x "${DCPATH}/bin/dependency-check.sh"
 
       - |
         echo "Running Dependency-Check SCA..."
         DC_ARGS="--project ${IMAGE_REPO_NAME} --scan . --out dependency-check-reports --format ALL"
-
 
         if [ -n "$DEP_CHECK_FAIL_CVSS" ]; then
           DC_ARGS="$DC_ARGS --failOnCVSS $DEP_CHECK_FAIL_CVSS"
@@ -102,6 +102,7 @@ phases:
             echo "Continuing despite Dependency-Check findings"
           fi
         fi
+
 
       # -----------------------------
       # SONARQUBE SCAN
