@@ -244,7 +244,8 @@ phases:
         fi
       - export IMAGE_TAG
       - IMAGE_FULLNAME="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com/${IMAGE_REPO_NAME}:${IMAGE_TAG}"
-      - echo "Image full name: ${IMAGE_FULLNAME}"
+      - |
+        echo "Image full name: ${IMAGE_FULLNAME}"
 
       - |
         aws ecr get-login-password --region $AWS_DEFAULT_REGION \
@@ -272,7 +273,8 @@ phases:
         fi
 
       # Install Trivy
-      - echo "Installing Trivy from: $TRIVY_URL"
+      - |
+        echo "Installing Trivy from: $TRIVY_URL"
       - wget -q "$TRIVY_URL" -O trivy.tar.gz || curl -sSL "$TRIVY_URL" -o trivy.tar.gz || true
       - tar -xzf trivy.tar.gz || true
       - if [ -f trivy ]; then chmod +x trivy && mv -f trivy /usr/local/bin/ || true; fi
@@ -281,7 +283,8 @@ phases:
 
       # Trivy filesystem scan
       - mkdir -p trivy-reports || true
-      - echo "Starting Trivy filesystem scan (severity: $TRIVY_EXIT_SEVERITIES)..."
+      - |
+        echo "Starting Trivy filesystem scan (severity: $TRIVY_EXIT_SEVERITIES)..."
       - set +e
       - trivy filesystem . --format json --severity $TRIVY_EXIT_SEVERITIES --output trivy-reports/trivy-filesystem.json --exit-code 0 || true
       - trivy filesystem . --format sarif --severity $TRIVY_EXIT_SEVERITIES --output trivy-reports/trivy-filesystem.sarif --exit-code 0 || true
