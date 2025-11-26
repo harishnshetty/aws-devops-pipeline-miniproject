@@ -176,7 +176,8 @@ phases:
       # -----------------------------
       # INSTALL TRIVY FIXED VERSION
       # -----------------------------
-      - echo "Installing Trivy from: $TRIVY_URL"
+      - |
+        echo "Installing Trivy from: $TRIVY_URL"
       - wget -q "$TRIVY_URL" -O trivy.tar.gz || curl -sSL "$TRIVY_URL" -o trivy.tar.gz
       - tar -xzf trivy.tar.gz || true
       - if [ -f trivy ]; then chmod +x trivy && mv -f trivy /usr/local/bin/ || true; fi
