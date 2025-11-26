@@ -302,7 +302,8 @@ phases:
       # -----------------------------
       # TRIVY IMAGE (LOCAL) SCAN — BEFORE PUSH
       # -----------------------------
-      - echo "Starting Trivy image scan for local image: ${IMAGE_REPO_NAME}:${IMAGE_TAG} (HIGH,CRITICAL)..."
+      - |
+        echo "Starting Trivy image scan for local image: ${IMAGE_REPO_NAME}:${IMAGE_TAG} (HIGH,CRITICAL)..."
       - set +e
 
       - TRIVY_EXIT_CODE_FLAG="--exit-code 0"
