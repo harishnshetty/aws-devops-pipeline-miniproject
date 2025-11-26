@@ -255,7 +255,8 @@ phases:
 
   post_build:
     commands:
-      - echo "Post-build: run image scan before push"
+      - |
+        echo "Post-build: run image scan before push"
 
       # -----------------------------
       # CLEANUP EFS MOUNT (Critical: must run after Dependency-Check completes)
