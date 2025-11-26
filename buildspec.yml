@@ -344,7 +344,8 @@ phases:
       # -----------------------------
       # PUSH IMAGE TO ECR (after scan)
       # -----------------------------
-      - echo "Pushing Docker image to ECR: ${IMAGE_FULLNAME}"
+      - |
+        echo "Pushing Docker image to ECR: ${IMAGE_FULLNAME}"
       - docker push ${IMAGE_FULLNAME} || echo "Docker push failed (check auth/permissions)"
 
       - echo "Post build done. Listing reports:"
