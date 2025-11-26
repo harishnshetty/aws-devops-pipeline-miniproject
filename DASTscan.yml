@@ -1,0 +1,82 @@
+##Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+##SPDX-License-Identifier: MIT-0
+version: 0.2
+
+env:
+  # Get the ZAP API key securely from Secrets Manager
+  secrets-manager:
+    OwaspZapApiKey: "zap/credentials:apiKey"
+  # Static variables (you can also override from CodeBuild console)
+  variables:
+    OwaspZapURL: "http://10.116.109.159:8080"          # ZAP daemon URL
+    ApplicationURL: "https://my-test-app.example.com"  # App under test
+
+phases:
+  install:
+    commands:
+      - echo "install phase....."
+  pre_build:
+    commands:
+      - echo "Starting OWASP ZAP active scan on $ApplicationURL ..."
+      - |
+        scanid=$(curl -s "$OwaspZapURL/JSON/ascan/action/scan/?apikey=$OwaspZapApiKey&url=$ApplicationURL&recurse=true&inScopeOnly=&scanPolicyName=&method=&postData=&contextId=" | jq -r '.scan')
+        echo "Scan ID is: $scanid"
+
+        stat=0
+        while [ "$stat" != "100" ]; do
+          stat=$(curl -s "$OwaspZapURL/JSON/ascan/view/status/?apikey=$OwaspZapApiKey&scanId=$scanid" | jq -r '.status')
+          echo "OWASP ZAP scan status is $stat%"
+          echo "OWASP ZAP analysis is in progress..."
+          sleep 5
+        done
+        echo "OWASP ZAP analysis status is completed."
+
+      # Get alerts summary (High and Medium)
+      - |
+        high_alerts=$(curl -s "$OwaspZapURL/JSON/alert/view/alertsSummary/?apikey=$OwaspZapApiKey&baseurl=$ApplicationURL" | jq -r '.alertsSummary.High // 0')
+        medium_alerts=$(curl -s "$OwaspZapURL/JSON/alert/view/alertsSummary/?apikey=$OwaspZapApiKey&baseurl=$ApplicationURL" | jq -r '.alertsSummary.Medium // 0')
+        echo "High alerts  : $high_alerts"
+        echo "Medium alerts: $medium_alerts"
+  build:
+    commands:
+      # Generate HTML report
+      - echo "Generating ZAP HTML report..."
+      - curl -s "$OwaspZapURL/OTHER/core/other/htmlreport/?apikey=$OwaspZapApiKey" -o zap-report.html
+
+      # Generate JSON report
+      - echo "Generating ZAP JSON report..."
+      - curl -s "$OwaspZapURL/OTHER/core/other/jsonreport/?apikey=$OwaspZapApiKey" | jq . > zap-scan-results.json
+
+      - echo "build stage completed"
+  post_build:
+    commands:
+      # Wrap JSON report with metadata and send to Lambda
+      - |
+        echo "Preparing payload for Lambda..."
+        jq "{ \"messageType\": \"CodeScanReport\", \"reportType\": \"OWASP-Zap\", \
+        \"createdAt\": \"$(date +\"%Y-%m-%dT%H:%M:%S.%3NZ\")\", \
+        \"source_repository\": env.CODEBUILD_SOURCE_REPO_URL, \
+        \"source_branch\": env.CODEBUILD_SOURCE_VERSION, \
+        \"build_id\": env.CODEBUILD_BUILD_ID, \
+        \"source_commitid\": env.CODEBUILD_RESOLVED_SOURCE_VERSION, \
+        \"report\": . }" zap-scan-results.json > payload.json
+
+        aws lambda invoke \
+          --function-name ImportVulToSecurityHub \
+          --payload file://payload.json \
+          owaspzap_scan_report.json \
+          && echo "LAMBDA_SUCCEEDED" || echo "LAMBDA_FAILED"
+
+      # Fail build if there are High or Medium alerts
+      - |
+        if [ "${high_alerts:-0}" -gt 0 ] || [ "${medium_alerts:-0}" -gt 0 ]; then
+          echo "There are HIGH or MEDIUM alerts.. failing the build"
+          exit 1
+        else
+          echo "No High/Medium alerts. Build passing."
+          exit 0
+        fi
+
+artifacts:
+  type: zip
+  files: '**/*'
