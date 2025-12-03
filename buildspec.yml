@@ -19,7 +19,7 @@ env:
     TRIVY_FAIL_IMAGE: "false"
 
     # EFS
-    EFS_MOUNT_TARGET: "fs-0de0e10853d28aa6c.efs.ap-south-1.amazonaws.com:/" 
+    EFS_MOUNT_TARGET: "fs-0302eaad30e6c4f93.efs.ap-south-1.amazonaws.com:/" 
     EFS_MOUNT_DIR: "/efs"
     DP_CHECK_DATA_DIR: "/efs/dependency-check-data"
     DP_CHECK_REPORT_DIR: "/efs/dependency-check-reports"
