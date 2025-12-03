@@ -53,6 +53,7 @@ phases:
         fi
       - echo "Docker availability:"
       - docker --version || true
+      - mkdir dependency-check-reports trivy-reports || true
       - mkdir -p "$EFS_MOUNT_DIR" "$DP_CHECK_DATA_DIR" "$DP_CHECK_REPORT_DIR" || true
       - |
         # EFS check & optional fallback manual mount
