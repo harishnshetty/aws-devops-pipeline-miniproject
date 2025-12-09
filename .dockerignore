@@ -13,3 +13,6 @@ trivy.tar.gz
 trivy-reports/**
 zap-reports/**
 zap.yml
+trivy-reports/**
+dependency-check-reports/**
+imagedefinitions.json

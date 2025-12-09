@@ -291,7 +291,20 @@ phases:
         find dc_tmp -type f -name "dependency-check-jenkins.html" -exec mv {} {}.disabled \; || true
         find dc_tmp -type f -name "*.xml" -exec mv {} {}.disabled \; || true
         echo "Large dependency-check files renamed (if present)."
+      - |
+        echo "Creating imagedefinitions.json for ECS deployment..."
+        cat > imagedefinitions.json <<EOF
+        [
+          {
+            "name": "${IMAGE_REPO_NAME}",
+            "imageUri": "${IMAGE_FULLNAME}",
+            "essential": true
+          }
+        ]
+        EOF
+        cat imagedefinitions.json
 
+        
       - |
         echo "Pushing Docker image to ECR: ${IMAGE_FULLNAME}"
         docker push ${IMAGE_FULLNAME} || echo "Docker push failed (check auth/permissions)"
@@ -301,10 +314,12 @@ phases:
       - ls -la dependency-check-reports/ || true
       - ls -la dc_tmp || true
 
+
 artifacts:
   files:
     - sonar-output.txt
     - result.json
     - trivy-reports/**
     - dependency-check-reports/**
+    - imagedefinitions.json
   discard-paths: no
