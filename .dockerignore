@@ -17,3 +17,4 @@ trivy-reports/**
 dependency-check-reports/**
 imagedefinitions.json
 DAST.yml
+docker-compose.yml

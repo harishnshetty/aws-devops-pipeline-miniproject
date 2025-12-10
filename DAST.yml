@@ -1,0 +1,70 @@
+version: 0.2
+
+env:
+  secrets-manager:
+    # ZAP_API_KEY is fetched from AWS Secrets Manager
+    # Format: secret-name:jsonKey
+    # Example if your secret is "dev/zap" and key is "apikey":
+    # ZAP_API_KEY: dev/zap:apikey
+    ZAP_API_KEY: dev/zap:apikey   # <-- change to your actual secret/key
+
+  variables:
+    ZAP_URL: "http://10.0.7.152:8080"
+    TARGET_URL: "https://staging.harishshetty.xyz"
+
+phases:
+  install:
+    runtime-versions:
+      docker: 20
+    commands:
+      - echo "=== Install phase ==="
+      - apt-get update -y
+      - apt-get install -y jq curl
+
+  pre_build:
+    commands:
+      - echo "=== Checking ZAP is up ==="
+      - curl "$ZAP_URL/JSON/core/view/version/?apikey=$ZAP_API_KEY"
+
+  build:
+    commands:
+      - echo "=== Starting Active Scan on $TARGET_URL ==="
+      - mkdir -p dast-report
+
+      # Start scan
+      - |
+        SCAN_ID=$(curl -s "$ZAP_URL/JSON/ascan/action/scan/?apikey=$ZAP_API_KEY&url=$TARGET_URL&recurse=true&inScopeOnly=false" | jq -r '.scan')
+        echo "Scan ID: $SCAN_ID"
+
+      # Poll status
+      - |
+        echo "=== Waiting for scan to finish ==="
+        while true; do
+          STATUS=$(curl -s "$ZAP_URL/JSON/ascan/view/status/?scanId=$SCAN_ID&apikey=$ZAP_API_KEY" | jq -r '.status')
+          echo "Progress: ${STATUS}%"
+          if [ "$STATUS" = "100" ]; then
+            break
+          fi
+          sleep 5
+        done
+
+      # Generate dast-report
+      - echo "=== Generating dast-report ==="
+      - curl "$ZAP_URL/OTHER/core/other/htmlreport/?apikey=$ZAP_API_KEY" -o dast-report/zap_report.html
+      - curl "$ZAP_URL/OTHER/core/other/jsonreport/?apikey=$ZAP_API_KEY" -o dast-report/zap_report.json
+
+      - echo "=== dast-report generated ==="
+      - ls -l dast-report
+
+  post_build:
+    commands:
+      - echo "=== (Optional) Fail build if High alerts exist ==="
+      - |
+        # To enforce quality gate, you can parse zap_report.json or zap_report.md here.
+        # Example (very simple): just print the markdown summary
+        cat dast-report/zap_report.md || true
+
+artifacts:
+  files:
+    - '**/*'
+  base-directory: 'dast-report'
