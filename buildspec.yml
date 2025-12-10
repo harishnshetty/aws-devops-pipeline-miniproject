@@ -18,7 +18,7 @@ env:
     DEP_CHECK_FAIL_CVSS: ""
     TRIVY_FAIL_IMAGE: "false"
 
-    # EFS.. (used only for Dependency-Check DATA cache)
+    # EFS... (used only for Dependency-Check DATA cache)
     EFS_MOUNT_TARGET: "fs-0e6533aeea50371ed.efs.ap-south-1.amazonaws.com:/"
     EFS_MOUNT_DIR: "/efs"
     DP_CHECK_DATA_DIR: "/efs/dependency-check-data"
