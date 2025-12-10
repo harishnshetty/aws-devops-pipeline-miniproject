@@ -15,11 +15,9 @@ phases:
 
   pre_build:
     commands:
-        
       - echo "=== OWASP ZAP SCAN START ==="
-
       - ENCODED_URL=$(printf %s "$ApplicationURL" | jq -sRr @uri)
-
+      - |
       - echo "Target URL: $ApplicationURL"
       - echo "Encoded URL: $ENCODED_URL"
 
