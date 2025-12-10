@@ -10,14 +10,13 @@ env:
     EFS_MOUNT_TARGET: "fs-0e6533aeea50371ed.efs.ap-south-1.amazonaws.com:/"
     EFS_MOUNT_DIR: "/efs"
     ZAP_SCAN_DATA_DIR: "/efs/zap-proxy"
-    EFS_MOUNT_OPTIONS: "nfsvers=4.1,rsize=1048576,wsize=1048576,hard,timeo=600,retrans=2,noresvport"
-    
-    # Control flags for EFS behavior
-    RUN_DP_CHECK: "true"
-    FALLBACK_MANUAL_MOUNT: "true"
-    FAIL_ON_EFS_MOUNT: "false"
-    MANUAL_MOUNT_MAX_RETRIES: "6"
 
+    EFS_MOUNT_OPTIONS: "nfsvers=4.1,rsize=1048576,wsize=1048576,hard,timeo=600,retrans=2,noresvport"
+    RUN_DP_CHECK: "true"
+    FAIL_ON_EFS_MOUNT: "false"
+    FALLBACK_MANUAL_MOUNT: "false"
+    MANUAL_MOUNT_MAX_RETRIES: "6"
+    
 phases:
   install:
     commands:
@@ -28,192 +27,105 @@ phases:
     commands:
       - echo "===== pre_build phase ====="
       - |
-        # Install required packages based on OS
         if command -v apt-get >/dev/null 2>&1; then
           apt-get update -y
-          apt-get install -y jq curl unzip wget openjdk-17-jre nfs-common amazon-efs-utils python3 python3-pip || true
+          apt-get install -y jq curl unzip wget openjdk-17-jre nfs-common amazon-efs-utils python3 || true
         elif command -v yum >/dev/null 2>&1; then
-          yum install -y jq curl unzip wget java-17-openjdk docker nfs-utils amazon-efs-utils python3 python3-pip || true
+          yum install -y jq curl unzip wget java-17-openjdk docker nfs-utils amazon-efs-utils python3 || true
         else
-          echo "OS package manager not recognized"
+          echo "Ensure Java 17+, Python3, unzip, curl, wget, docker, and nfs client (amazon-efs-utils) are installed"
         fi
-      
-      # Install ZAP Python API
-      - pip3 install python-owasp-zap-v2.4 || true
 
       # Local report dirs (for artifacts)
-      - mkdir -p zap-report
+      - mkdir -p zap-report || true
 
       # EFS directories (for ZAP install/cache)
-      - mkdir -p "$EFS_MOUNT_DIR" "$ZAP_SCAN_DATA_DIR"
+      - mkdir -p "$EFS_MOUNT_DIR" "$ZAP_SCAN_DATA_DIR" || true
 
       - |
-        # EFS mount handling
+        # EFS check & optional fallback manual mount
         echo "Checking EFS mountpoint: $EFS_MOUNT_DIR"
-        
-        # First check if EFS is already mounted
-        if mountpoint -q "$EFS_MOUNT_DIR"; then
-          echo "EFS is already mounted at $EFS_MOUNT_DIR."
-        else
-          echo "EFS not mounted at $EFS_MOUNT_DIR."
-          
-          if [ "${FALLBACK_MANUAL_MOUNT}" = "true" ]; then
-            echo "Attempting manual mount ${EFS_MOUNT_TARGET} -> ${EFS_MOUNT_DIR}"
-            MAX_RETRIES=${MANUAL_MOUNT_MAX_RETRIES}
-            COUNT=0
-            MOUNT_SUCCESS=0
-            
-            while [ $COUNT -lt $MAX_RETRIES ]; do
-              echo "Manual mount attempt $((COUNT+1))..."
-              if mount -v -t nfs4 -o ${EFS_MOUNT_OPTIONS} "${EFS_MOUNT_TARGET}" "${EFS_MOUNT_DIR}"; then
-                MOUNT_SUCCESS=1
-                break
+        if [ "$RUN_DP_CHECK" = "true" ]; then
+          if mountpoint -q "$EFS_MOUNT_DIR"; then
+            echo "EFS is mounted at $EFS_MOUNT_DIR."
+          else
+            echo "EFS not mounted at $EFS_MOUNT_DIR."
+            if [ "${FALLBACK_MANUAL_MOUNT}" = "true" ]; then
+              echo "Attempting manual mount ${EFS_MOUNT_TARGET} -> ${EFS_MOUNT_DIR}"
+              MAX_RETRIES=${MANUAL_MOUNT_MAX_RETRIES:-6}
+              COUNT=0
+              MOUNT_SUCCESS=0
+              while [ $COUNT -lt $MAX_RETRIES ]; do
+                echo "Manual mount attempt $((COUNT+1))..."
+                mount -v -t nfs4 -o ${EFS_MOUNT_OPTIONS} "${EFS_MOUNT_TARGET}" "${EFS_MOUNT_DIR}" && { MOUNT_SUCCESS=1; break; } || true
+                COUNT=$((COUNT+1))
+                sleep 10
+              done
+              if [ "$MOUNT_SUCCESS" -eq 1 ]; then
+                echo "Manual mount succeeded."
+              else
+                echo "Manual mount failed after $MAX_RETRIES attempts."
+                if [ "${FAIL_ON_EFS_MOUNT}" = "true" ]; then
+                  echo "FAIL_ON_EFS_MOUNT=true -> failing build."
+                  exit 1
+                else
+                  echo "Continuing without EFS; RUN_DP_CHECK will be disabled."
+                  RUN_DP_CHECK="false"
+                fi
               fi
-              COUNT=$((COUNT+1))
-              sleep 10
-            done
-            
-            if [ "$MOUNT_SUCCESS" -eq 1 ]; then
-              echo "Manual mount succeeded."
             else
-              echo "Manual mount failed after $MAX_RETRIES attempts."
               if [ "${FAIL_ON_EFS_MOUNT}" = "true" ]; then
-                echo "FAIL_ON_EFS_MOUNT=true -> failing build."
+                echo "FAIL_ON_EFS_MOUNT=true and EFS not mounted -> failing build."
                 exit 1
               else
-                echo "Continuing without EFS; will use local directory for ZAP."
-                ZAP_SCAN_DATA_DIR="/tmp/zap-proxy"
-                mkdir -p "$ZAP_SCAN_DATA_DIR"
+                echo "Skipping Dependency-Check (EFS not mounted)."
+                RUN_DP_CHECK="false"
               fi
             fi
-          else
-            if [ "${FAIL_ON_EFS_MOUNT}" = "true" ]; then
-              echo "FAIL_ON_EFS_MOUNT=true and EFS not mounted -> failing build."
-              exit 1
-            else
-              echo "Continuing without EFS; will use local directory for ZAP."
-              ZAP_SCAN_DATA_DIR="/tmp/zap-proxy"
-              mkdir -p "$ZAP_SCAN_DATA_DIR"
-            fi
           fi
+        else
+          echo "RUN_DP_CHECK != true — skipping EFS checks."
         fi
 
       - |
-        echo "===== Preparing ZAP ====="
+        echo "===== Preparing ZAP on EFS ====="
         ZAP_TAR_NAME="ZAP_${ZAP_VERSION}_Linux.tar.gz"
         ZAP_TAR_PATH="${ZAP_SCAN_DATA_DIR}/${ZAP_TAR_NAME}"
-        ZAP_EXTRACTED_DIR="${ZAP_SCAN_DATA_DIR}/ZAP_${ZAP_VERSION}"
-        
-        # Check if ZAP is already extracted and executable
-        if [ -d "${ZAP_EXTRACTED_DIR}" ] && [ -x "${ZAP_EXTRACTED_DIR}/zap.sh" ]; then
-          echo "ZAP already exists at ${ZAP_EXTRACTED_DIR}, skipping download/extraction."
+        ZAP_INSTALL_DIR="${ZAP_SCAN_DATA_DIR}/ZAP_${ZAP_VERSION}"
+
+        # 1) If ZAP already extracted on EFS, just reuse it
+        if [ -x "${ZAP_INSTALL_DIR}/zap.sh" ]; then
+          echo "ZAP already extracted at ${ZAP_INSTALL_DIR}, skipping download."
         else
-          # Download ZAP if tarball doesn't exist
-          if [ ! -f "${ZAP_TAR_PATH}" ]; then
-            echo "Downloading ZAP from ${ZAP_PROXY_URL}..."
-            curl -sSL "${ZAP_PROXY_URL}" -o "${ZAP_TAR_PATH}"
-            
-            if [ $? -ne 0 ]; then
-              echo "Failed to download ZAP. Trying alternative download method..."
-              # Try alternative download method
-              wget -q "${ZAP_PROXY_URL}" -O "${ZAP_TAR_PATH}" || {
-                echo "Failed to download ZAP. Exiting."
-                exit 1
-              }
-            fi
+          # 2) If tarball already cached on EFS, reuse it
+          if [ -f "${ZAP_TAR_PATH}" ]; then
+            echo "Found existing ZAP tarball in EFS: ${ZAP_TAR_PATH}"
           else
-            echo "Using existing ZAP tarball: ${ZAP_TAR_PATH}"
+            echo "ZAP tarball not found in EFS, downloading..."
+            curl -sSL "${ZAP_PROXY_URL}" -o "${ZAP_TAR_PATH}"
           fi
-          
-          # Extract ZAP
-          echo "Extracting ZAP to ${ZAP_SCAN_DATA_DIR}..."
-          tar -xzf "${ZAP_TAR_PATH}" -C "${ZAP_SCAN_DATA_DIR}" || {
-            echo "Failed to extract ZAP tarball. Exiting."
-            exit 1
-          }
-          
-          # Check the extracted directory structure
-          if [ ! -x "${ZAP_EXTRACTED_DIR}/zap.sh" ]; then
-            # Sometimes the extraction creates a different directory structure
-            EXTRACTED_DIR=$(tar -tzf "${ZAP_TAR_PATH}" | head -1 | cut -f1 -d"/")
-            if [ -x "${ZAP_SCAN_DATA_DIR}/${EXTRACTED_DIR}/zap.sh" ]; then
-              echo "Found ZAP in different directory structure: ${EXTRACTED_DIR}"
-              ZAP_EXTRACTED_DIR="${ZAP_SCAN_DATA_DIR}/${EXTRACTED_DIR}"
-            else
-              echo "ZAP extraction failed or directory structure unexpected"
-              find "${ZAP_SCAN_DATA_DIR}" -name "zap.sh" -type f | head -5
-              exit 1
-            fi
-          fi
+
+          echo "Extracting ZAP tarball into ${ZAP_SCAN_DATA_DIR}..."
+          tar -xzf "${ZAP_TAR_PATH}" -C "${ZAP_SCAN_DATA_DIR}"
         fi
-        
-        echo "ZAP is ready at: ${ZAP_EXTRACTED_DIR}"
-        # Make ZAP scripts executable
-        chmod +x "${ZAP_EXTRACTED_DIR}"/*.sh "${ZAP_EXTRACTED_DIR}"/*.py 2>/dev/null || true
+
+        echo "ZAP is ready under: ${ZAP_INSTALL_DIR}"
 
   build:
     commands:
       - echo "===== build (ZAP Baseline Scan) phase ====="
       - TARGET_URL="https://staging.harishshetty.xyz/"
-      - ZAP_EXTRACTED_DIR="${ZAP_SCAN_DATA_DIR}/ZAP_${ZAP_VERSION}"
+      - ZAP_INSTALL_DIR="${ZAP_SCAN_DATA_DIR}/ZAP_${ZAP_VERSION}"
       - REPORT_HTML="zap-report/zap_baseline.html"
       - REPORT_JSON="zap-report/zap_baseline.json"
-      
+      - echo "Running ZAP Baseline scan against ${TARGET_URL}"
       - |
-        # First check if the baseline script exists
-        if [ -f "${ZAP_EXTRACTED_DIR}/zap-baseline.py" ]; then
-          BASELINE_SCRIPT="${ZAP_EXTRACTED_DIR}/zap-baseline.py"
-        elif [ -f "${ZAP_EXTRACTED_DIR}/zap_baseline.py" ]; then
-          BASELINE_SCRIPT="${ZAP_EXTRACTED_DIR}/zap_baseline.py"
-        else
-          # Try to find the script
-          BASELINE_SCRIPT=$(find "${ZAP_EXTRACTED_DIR}" -name "*baseline*.py" -type f | head -1)
-          if [ -z "$BASELINE_SCRIPT" ]; then
-            echo "ERROR: Could not find ZAP baseline script in ${ZAP_EXTRACTED_DIR}"
-            echo "Available scripts:"
-            find "${ZAP_EXTRACTED_DIR}" -name "*.py" -type f | head -10
-            exit 1
-          fi
-        fi
-      
-      - |
-        echo "Running ZAP Baseline scan against ${TARGET_URL}"
-      - |
-        echo "Using script: ${BASELINE_SCRIPT}"
-      
-      - |
-        # Run ZAP baseline scan
-        python3 "${BASELINE_SCRIPT}" \
+        python3 "${ZAP_INSTALL_DIR}/zap-baseline.py" \
           -t "${TARGET_URL}" \
           -r "${REPORT_HTML}" \
           -J "${REPORT_JSON}" \
           -I \
-          -m 2 \
-          -d \
-          --hook="${ZAP_EXTRACTED_DIR}/zap.sh" || {
-            echo "ZAP scan completed with warnings or errors"
-            # Continue even if scan has warnings
-            true
-          }
-
-      - |
-        # Check if reports were generated
-        if [ -f "${REPORT_HTML}" ]; then
-          echo "HTML report generated: ${REPORT_HTML}"
-        else
-          echo "WARNING: HTML report not generated"
-        fi
-        
-        if [ -f "${REPORT_JSON}" ]; then
-          echo "JSON report generated: ${REPORT_JSON}"
-          # Show summary of findings if any
-          if command -v jq >/dev/null 2>&1; then
-            echo "Scan summary:"
-            jq '.site[] | {host: .@host, alerts: .alerts[] | {alert: .alert, risk: .riskdesc, count: .count}}' "${REPORT_JSON}" 2>/dev/null || true
-          fi
-        else
-          echo "WARNING: JSON report not generated"
-        fi
+          -m 2
 
 artifacts:
   files:
