@@ -52,7 +52,8 @@ phases:
         ASCAN_ID=$(curl -s
         "$ZAP_URL/JSON/ascan/action/scan/?apikey=$ZAP_API_KEY&url=$TARGET_URL&recurse=true&inScopeOnly=false"
         | jq -r '.scan')
-      - echo "Active scan id: $ASCAN_ID"
+      - |
+        echo "Active scan id: $ASCAN_ID"
       - |
         ASTATUS=0
         while [ "$ASTATUS" -lt 100 ]; do
