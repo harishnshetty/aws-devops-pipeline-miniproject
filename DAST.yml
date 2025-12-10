@@ -1,20 +1,22 @@
+version: 0.2
+
 env:
   variables:
     # ZAP download details
     ZAP_VERSION: "2.16.1"
     ZAP_PROXY_URL: "https://github.com/zaproxy/zaproxy/releases/download/v2.16.1/ZAP_2.16.1_Linux.tar.gz"
 
-    # EFS (used for ZAP install + data cache)
+    # EFS (used ONLY for ZAP install + data cache, NOT for reports)
     EFS_MOUNT_TARGET: "fs-0e6533aeea50371ed.efs.ap-south-1.amazonaws.com:/"
     EFS_MOUNT_DIR: "/efs"
-    ZAP_SCAN_DATA_DIR: "/efs/zap-proxy"
+    ZAP_INSTALL_BASE_DIR: "/efs/zap-proxy"
 
     EFS_MOUNT_OPTIONS: "nfsvers=4.1,rsize=1048576,wsize=1048576,hard,timeo=600,retrans=2,noresvport"
     RUN_DP_CHECK: "true"
     FAIL_ON_EFS_MOUNT: "false"
     FALLBACK_MANUAL_MOUNT: "false"
     MANUAL_MOUNT_MAX_RETRIES: "6"
-    
+
 phases:
   install:
     commands:
@@ -34,19 +36,19 @@ phases:
           echo "Ensure Java 17+, Python3, unzip, curl, wget, docker, and nfs client (amazon-efs-utils) are installed"
         fi
 
-      # Create report directory
-      - mkdir -p zap-report || true
+      # Local report directory (NOT on EFS)
+      - mkdir -p "$(pwd)/zap-report" || true
 
-      # EFS directories (for ZAP install/cache)
-      - mkdir -p "$EFS_MOUNT_DIR" "$ZAP_SCAN_DATA_DIR" || true
+      # EFS directories (for ZAP install/cache only)
+      - mkdir -p "$EFS_MOUNT_DIR" "$ZAP_INSTALL_BASE_DIR" || true
 
       # [Your existing EFS mounting code remains the same...]
 
       - |
-        echo "===== Preparing ZAP on EFS ====="
+        echo "===== Preparing ZAP on EFS (binaries/cache only) ====="
         ZAP_TAR_NAME="ZAP_${ZAP_VERSION}_Linux.tar.gz"
-        ZAP_TAR_PATH="${ZAP_SCAN_DATA_DIR}/${ZAP_TAR_NAME}"
-        ZAP_INSTALL_DIR="${ZAP_SCAN_DATA_DIR}/ZAP_${ZAP_VERSION}"
+        ZAP_TAR_PATH="${ZAP_INSTALL_BASE_DIR}/${ZAP_TAR_NAME}"
+        ZAP_INSTALL_DIR="${ZAP_INSTALL_BASE_DIR}/ZAP_${ZAP_VERSION}"
 
         # 1) If ZAP already extracted on EFS, just reuse it
         if [ -x "${ZAP_INSTALL_DIR}/zap.sh" ]; then
@@ -60,73 +62,79 @@ phases:
             curl -sSL "${ZAP_PROXY_URL}" -o "${ZAP_TAR_PATH}"
           fi
 
-          echo "Extracting ZAP tarball into ${ZAP_SCAN_DATA_DIR}..."
-          tar -xzf "${ZAP_TAR_PATH}" -C "${ZAP_SCAN_DATA_DIR}"
+          echo "Extracting ZAP tarball into ${ZAP_INSTALL_BASE_DIR}..."
+          tar -xzf "${ZAP_TAR_PATH}" -C "${ZAP_INSTALL_BASE_DIR}"
         fi
 
         echo "ZAP is ready under: ${ZAP_INSTALL_DIR}"
 
-build:
-  commands:
-    - echo "===== build (ZAP Baseline Scan) phase ====="
-    - TARGET_URL="https://staging.harishshetty.xyz/"
-    - ZAP_INSTALL_DIR="${ZAP_SCAN_DATA_DIR}/ZAP_${ZAP_VERSION}"
-    
-    # Create output directory with absolute path
-    - mkdir -p "$(pwd)/zap-report"
-    
-    # Define report paths
-    - REPORT_HTML="$(pwd)/zap-report/zap_baseline.html"
-    - REPORT_JSON="$(pwd)/zap-report/zap_baseline.json"
-    
-    - echo "Running ZAP Baseline scan against ${TARGET_URL}"
-    
-    # Run ZAP scan with better error handling
-    - |
-      set +e  # Don't exit on error immediately
-      
-      echo "Starting ZAP scan..."
-      "${ZAP_INSTALL_DIR}/zap.sh" -cmd \
-        -quickurl "${TARGET_URL}" \
-        -quickprogress \
-        -quickout "${REPORT_HTML}" 2>&1 | tee zap-scan.log
-      
-      SCAN_EXIT_CODE=${PIPESTATUS[0]}
-      
-      if [ $SCAN_EXIT_CODE -eq 0 ]; then
-        echo "ZAP scan completed successfully"
-      else
-        echo "ZAP scan exited with code: $SCAN_EXIT_CODE"
-        echo "Scan log:"
-        cat zap-scan.log
-      fi
-    
-    # Generate JSON report
-    - |
-      echo "Generating JSON report..."
-      "${ZAP_INSTALL_DIR}/zap.sh" -cmd \
-        -quickurl "${TARGET_URL}" \
-        -quickprogress \
-        -quickout "${REPORT_JSON}" \
-        -format json 2>&1 | tee zap-json.log
-    
-    # Verify reports were created
-    - echo "Checking if reports were created..."
-    - ls -la "$(pwd)/zap-report/" || true
-    - ls -la "$(pwd)/" || true
-    
-    # Create a dummy file if no reports were generated (for debugging)
-    - |
-      if [ ! -f "${REPORT_HTML}" ] && [ ! -f "${REPORT_JSON}" ]; then
-        echo "No reports found. Creating debug file..."
-        echo "ZAP scan completed but no reports generated" > "$(pwd)/zap-report/debug.txt"
-        echo "Scan log:" >> "$(pwd)/zap-report/debug.txt"
-        cat zap-scan.log >> "$(pwd)/zap-report/debug.txt"
-      fi
-    
-    - echo "Build phase completed"
+  build:
+    commands:
+      - echo "===== build (ZAP Baseline Scan) phase ====="
+      - TARGET_URL="https://staging.harishshetty.xyz/"
+      - ZAP_INSTALL_DIR="${ZAP_INSTALL_BASE_DIR}/ZAP_${ZAP_VERSION}"
 
-# More flexible artifacts configuration
+      # Local report directory (workspace)
+      - REPORT_DIR="$(pwd)/zap-report"
+      - mkdir -p "${REPORT_DIR}"
+
+      # Define report paths (LOCAL, not on EFS)
+      - REPORT_HTML="${REPORT_DIR}/zap_baseline.html"
+      - REPORT_JSON="${REPORT_DIR}/zap_baseline.json"
+
+      - echo "Running ZAP Baseline scan against ${TARGET_URL}"
+      
+      # Run ZAP scan with better error handling (HTML)
+      - |
+        set +e  # Don't exit on error immediately
+
+        echo "Starting ZAP HTML scan..."
+        "${ZAP_INSTALL_DIR}/zap.sh" -cmd \
+          -quickurl "${TARGET_URL}" \
+          -quickprogress \
+          -quickout "${REPORT_HTML}" 2>&1 | tee "${REPORT_DIR}/zap-scan.log"
+
+        SCAN_EXIT_CODE=${PIPESTATUS[0]}
+
+        if [ $SCAN_EXIT_CODE -eq 0 ]; then
+          echo "ZAP HTML scan completed successfully"
+        else
+          echo "ZAP HTML scan exited with code: $SCAN_EXIT_CODE"
+          echo "Scan log:"
+          cat "${REPORT_DIR}/zap-scan.log"
+        fi
+
+      # Generate JSON report
+      - |
+        echo "Starting ZAP JSON scan..."
+        "${ZAP_INSTALL_DIR}/zap.sh" -cmd \
+          -quickurl "${TARGET_URL}" \
+          -quickprogress \
+          -quickout "${REPORT_JSON}" \
+          -format json 2>&1 | tee "${REPORT_DIR}/zap-json.log"
+
+      # Verify reports were created
+      - echo "Checking if reports were created..."
+      - ls -la "${REPORT_DIR}" || true
+      - ls -la "$(pwd)/" || true
+
+      # Create a dummy file if no reports were generated (for debugging)
+      - |
+        if [ ! -f "${REPORT_HTML}" ] && [ ! -f "${REPORT_JSON}" ]; then
+          echo "No reports found. Creating debug file..."
+          {
+            echo "ZAP scan completed but no reports generated"
+            echo
+            echo "=== zap-scan.log ==="
+            cat "${REPORT_DIR}/zap-scan.log" || true
+            echo
+            echo "=== zap-json.log ==="
+            cat "${REPORT_DIR}/zap-json.log" || true
+          } > "${REPORT_DIR}/debug.txt"
+        fi
+
+      - echo "Build phase completed"
+
 artifacts:
   files:
     - "**/*"
