@@ -2,106 +2,92 @@ version: 0.2
 
 env:
   secrets-manager:
-    ZAP_API_KEY: dev/zap:apikey
+    OwaspZapApiKey: dev/zap:apikey
 
   variables:
-    ZAP_URL: "http://10.0.7.152:8080"
-    TARGET_URL: "https://staging.harishshetty.xyz/"
+    OwaspZapURL: "http://10.0.7.152:8080"
+    ApplicationURL: "https://staging.harishshetty.xyz/"
 
 phases:
   install:
     commands:
-      - echo "=== INSTALL PHASE ==="
-      - yum install -y jq || apt-get install -y jq
+      - ap-get install -y jq
 
   pre_build:
     commands:
+        | 
+      - echo "=== OWASP ZAP SCAN START ==="
+
+      - ENCODED_URL=$(printf %s "$ApplicationURL" | jq -sRr @uri)
+      - echo "Target URL: $ApplicationURL"
+      - echo "Encoded URL: $ENCODED_URL"
+
+      ###########################################################
+      # ACTIVE SCAN
+      ###########################################################
+      - scanid=$(curl -s "$OwaspZapURL/JSON/ascan/action/scan/?apikey=$OwaspZapApiKey&url=$ENCODED_URL&recurse=true&inScopeOnly=false" | jq -r '.scan')
+      - echo "Active Scan ID: $scanid"
+
+      ###########################################################
+      # ACTIVE SCAN PROGRESS LOOP
+      ###########################################################
+      - |
+        stat=0
+        while [ "$stat" -lt 100 ]; do
+          stat=$(curl -s "$OwaspZapURL/JSON/ascan/view/status/?apikey=$OwaspZapApiKey&scanId=$scanid" | jq -r '.status // 0')
+          echo "Active Scan Progress: $stat%"
+          sleep 5
+        done
+        echo "=== Active Scan Completed ==="
+
+      ###########################################################
+      # FETCH HIGH & MEDIUM ALERTS
+      ###########################################################
+      - high_alerts=$(curl -s "$OwaspZapURL/JSON/alert/view/alertsSummary/?apikey=$OwaspZapApiKey&baseurl=$ApplicationURL" | jq -r '.alertsSummary.High // 0')
+      - medium_alerts=$(curl -s "$OwaspZapURL/JSON/alert/view/alertsSummary/?apikey=$OwaspZapApiKey&baseurl=$ApplicationURL" | jq -r '.alertsSummary.Medium // 0')
         |
-      - echo "=== Checking ZAP Daemon ==="
-      - curl -s "$ZAP_URL/JSON/core/view/version/?apikey=$ZAP_API_KEY"
-
-      - echo "=== Checking Target Website Access ==="
-      - curl -I "$TARGET_URL"
-
-      - echo "=== Encoding Target URL ==="
-      - ENCODED_TARGET=$(printf %s "$TARGET_URL" | jq -sRr @uri)
-      - echo "Encoded Target: $ENCODED_TARGET"
+      - echo "High Alerts: $high_alerts"
+      - echo "Medium Alerts: $medium_alerts"
 
   build:
     commands:
-      ##############################################################
-      # SPIDER SCAN
-      ##############################################################
-      - echo "=== Starting Spider ==="
-      - SPIDER_SCAN_ID=$(curl -s "$ZAP_URL/JSON/spider/action/scan/?apikey=$ZAP_API_KEY&url=$ENCODED_TARGET&recurse=true" | jq -r '.scan')
-      - |
-        echo "Spider ID: $SPIDER_SCAN_ID"
-
-      - |
-        STATUS=0
-        while [ "$STATUS" -lt 100 ]; do
-          STATUS=$(curl -s "$ZAP_URL/JSON/spider/view/status/?scanId=$SPIDER_SCAN_ID" | jq -r '.status // 0')
-          echo "Spider progress: $STATUS %"
-          sleep 5
-        done
-
-      ##############################################################
-      # ACTIVE SCAN
-      ##############################################################
-      - echo "=== Starting Active Scan ==="
-      - ASCAN_ID=$(curl -s "$ZAP_URL/JSON/ascan/action/scan/?apikey=$ZAP_API_KEY&url=$ENCODED_TARGET&recurse=true&inScopeOnly=false" | jq -r '.scan')
-      - |
-        echo "Active Scan ID: $ASCAN_ID"
-
-      - |
-        ASTATUS=0
-        while [ "$ASTATUS" -lt 100 ]; do
-          ASTATUS=$(curl -s "$ZAP_URL/JSON/ascan/view/status/?scanId=$ASCAN_ID" | jq -r '.status // 0')
-          echo "Active Scan progress: $ASTATUS %"
-          sleep 8
-        done
-
-      ##############################################################
-      # DOWNLOAD RAW REPORTS
-      ##############################################################
-      - echo "=== Downloading Reports ==="
       - mkdir -p dast-report
-      - curl -s "$ZAP_URL/OTHER/core/other/htmlreport/?apikey=$ZAP_API_KEY" -o dast-report/raw.html
-      - curl -s "$ZAP_URL/OTHER/core/other/jsonreport/?apikey=$ZAP_API_KEY" -o dast-report/raw.json
 
-      ##############################################################
-      # FILTER JSON (ONLY TARGET URL)
-      ##############################################################
-      - echo "=== Filtering JSON (Target Only) ==="
-      - jq --arg TARGET "$TARGET_URL" '.site |= map(select(.["@name"] | startswith($TARGET)))' dast-report/raw.json > dast-report/zap_report.json
+      ###########################################################
+      # GENERATE RAW REPORTS
+      ###########################################################
+      - curl -s "$OwaspZapURL/OTHER/core/other/jsonreport/?apikey=$OwaspZapApiKey" -o dast-report/raw.json
+      - curl -s "$OwaspZapURL/OTHER/core/other/htmlreport/?apikey=$OwaspZapApiKey" -o dast-report/raw.html
 
-      ##############################################################
-      # FILTER HTML (ONLY TARGET URL)
-      ##############################################################
-      - echo "=== Filtering HTML (Target Only) ==="
-      - DOMAIN=$(echo "$TARGET_URL" | sed 's|https\?://||' | sed 's|/||g')
+      ###########################################################
+      # FILTER JSON → ONLY TARGET URL
+      ###########################################################
+      - jq --arg TARGET "$ApplicationURL" '.site |= map(select(.["@name"] | startswith($TARGET)))' dast-report/raw.json > dast-report/zap_report.json
 
-      # Extract only the <h2> section for TARGET_URL
+      ###########################################################
+      # FILTER HTML → ONLY TARGET URL (NO contains())
+      ###########################################################
+      - DOMAIN=$(echo "$ApplicationURL" | sed 's|https\?://||' | sed 's|/||g')
       - |
-        awk "/<h2>.*$DOMAIN/ {flag=1} 
-             /<h2>/ && !/<h2>.*$DOMAIN/ {flag=0} 
+        awk "/<h2>.*$DOMAIN/ {flag=1}
+             /<h2>/ && !/<h2>.*$DOMAIN/ {flag=0}
              flag" dast-report/raw.html > dast-report/zap_report.html
 
-      - echo "=== Final Reports Generated ==="
+      - echo "=== Reports Generated ==="
       - ls -l dast-report
 
   post_build:
     commands:
-        |
-      - echo "=== Checking High Alerts ==="
-      - HIGH=$(jq '[.site[].alerts[] | select(.riskcode=="3")] | length' dast-report/zap_report.json)
-      - echo "High Alerts Found: $HIGH"
+      ###########################################################
+      # FAIL IF HIGH OR MEDIUM ALERTS
+      ###########################################################
       - |
-        if [ "$HIGH" -gt 0 ]; then
-          echo "❌ High alerts found — Failing build."
+        if [ "$high_alerts" != 0 ] || [ "$medium_alerts" != 0 ]; then
+          echo "❌ High or Medium alerts found — failing build"
           exit 1
         fi
-        echo "✅ No high alerts — Build OK."
+
+      - echo "✅ No High/Medium alerts — Build SUCCESS"
 
 artifacts:
   files:
