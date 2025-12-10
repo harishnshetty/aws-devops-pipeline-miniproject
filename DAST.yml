@@ -13,42 +13,58 @@ phases:
     commands:
       - apt-get install -y jq
 
-  pre_build:
-    commands:
-      - echo "=== OWASP ZAP SCAN START ==="
-      - ENCODED_URL=$(printf %s "$ApplicationURL" | jq -sRr @uri)
-      - |
-        echo "Target URL: $ApplicationURL"
-      - |
-        echo "Encoded URL: $ENCODED_URL"
+pre_build:
+  commands:
+    - echo "=== OWASP ZAP SCAN START ==="
 
-      ###########################################################
-      # ACTIVE SCAN
-      ###########################################################
-      - scanid=$(curl -s "$OwaspZapURL/JSON/ascan/action/scan/?apikey=$OwaspZapApiKey&url=$ENCODED_URL&recurse=true&inScopeOnly=false" | jq -r '.scan')
-      - |
-        echo "Active Scan ID: $scanid"
+    - |
+      echo "Target URL: $ApplicationURL"
 
-      ###########################################################
-      # ACTIVE SCAN PROGRESS LOOP
-      ###########################################################
-      - |
-        stat=0
-        while [ "$stat" -lt 100 ]; do
-          stat=$(curl -s "$OwaspZapURL/JSON/ascan/view/status/?apikey=$OwaspZapApiKey&scanId=$scanid" | jq -r '.status // 0')
-          echo "Active Scan Progress: $stat%"
-          sleep 5
-        done
-        echo "=== Active Scan Completed ==="
+    ###########################################################
+    # ACTIVE SCAN
+    ###########################################################
+    - |
+      SCAN_RESPONSE=$(curl -s "$OwaspZapURL/JSON/ascan/action/scan/?apikey=$OwaspZapApiKey&url=$ApplicationURL&recurse=true&inScopeOnly=false")
+      echo "Scan API raw response: $SCAN_RESPONSE"
+      scanid=$(echo "$SCAN_RESPONSE" | jq -r '.scan // empty')
+      if [ -z "$scanid" ] || [ "$scanid" = "null" ]; then
+        echo "❌ Failed to start active scan – no scan ID returned"
+        exit 1
+      fi
+      echo "✅ Active Scan ID: $scanid"
 
-      ###########################################################
-      # FETCH HIGH & MEDIUM ALERTS
-      ###########################################################
-      - high_alerts=$(curl -s "$OwaspZapURL/JSON/alert/view/alertsSummary/?apikey=$OwaspZapApiKey&baseurl=$ApplicationURL" | jq -r '.alertsSummary.High // 0')
-      - medium_alerts=$(curl -s "$OwaspZapURL/JSON/alert/view/alertsSummary/?apikey=$OwaspZapApiKey&baseurl=$ApplicationURL" | jq -r '.alertsSummary.Medium // 0')
-      - |
-        echo "High Alerts: $high_alerts"
-        echo "Medium Alerts: $medium_alerts"
+    ###########################################################
+    # ACTIVE SCAN PROGRESS LOOP (BOUNDED)
+    ###########################################################
+    - |
+      stat=0
+      attempts=0
+      max_attempts=120   # ~10 minutes
+
+      while [ "$stat" -lt 100 ] && [ "$attempts" -lt "$max_attempts" ]; do
+        STATUS_RESPONSE=$(curl -s "$OwaspZapURL/JSON/ascan/view/status/?apikey=$OwaspZapApiKey&scanId=$scanid")
+        stat=$(echo "$STATUS_RESPONSE" | jq -r '.status // 0')
+        echo "Active Scan Progress: $stat% (attempt $attempts)"
+        attempts=$((attempts + 1))
+        sleep 5
+      done
+
+      if [ "$stat" -lt 100 ]; then
+        echo "❌ Active scan did not finish within time limit"
+        exit 1
+      fi
+
+      echo "=== Active Scan Completed ==="
+
+    ###########################################################
+    # FETCH HIGH & MEDIUM ALERTS
+    ###########################################################
+    - high_alerts=$(curl -s "$OwaspZapURL/JSON/alert/view/alertsSummary/?apikey=$OwaspZapApiKey&baseurl=$ApplicationURL" | jq -r '.alertsSummary.High // 0')
+    - medium_alerts=$(curl -s "$OwaspZapURL/JSON/alert/view/alertsSummary/?apikey=$OwaspZapApiKey&baseurl=$ApplicationURL" | jq -r '.alertsSummary.Medium // 0')
+    - |
+      echo "High Alerts: $high_alerts"
+      echo "Medium Alerts: $medium_alerts"
+
 
   build:
     commands:
