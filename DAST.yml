@@ -11,7 +11,6 @@ env:
 phases:
   install:
     commands:
-      # For Ubuntu-based CodeBuild images
       - apt-get update -y
       - apt-get install -y jq curl
 
@@ -52,8 +51,26 @@ phases:
           sleep 5
         fi
 
+        echo "=== 2.5) Get Sites from ZAP tree ==="
+        SITES_JSON=$(curl -s "$ZAP_URL/JSON/core/view/sites/?apikey=$API_KEY")
+        echo "Sites JSON: $SITES_JSON"
+        # Extract list of sites
+        SITES=$(echo "$SITES_JSON" | jq -r '.sites[]')
+        echo "Sites in ZAP tree:"
+        echo "$SITES"
+
+        # Try to pick a site that contains our hostname
+        SCAN_URL=$(echo "$SITES" | grep 'staging.harishshetty.xyz' | head -n1 || true)
+
+        if [ -z "$SCAN_URL" ]; then
+          echo "❗ Could not find staging.harishshetty.xyz in sites list, falling back to TARGET"
+          SCAN_URL="$TARGET"
+        fi
+
+        echo "Using scan URL: $SCAN_URL"
+
         echo "=== 3) Active Scan ==="
-        ASCAN_JSON=$(curl -s "$ZAP_URL/JSON/ascan/action/scan/?apikey=$API_KEY&url=$TARGET&recurse=true&inScopeOnly=false")
+        ASCAN_JSON=$(curl -s "$ZAP_URL/JSON/ascan/action/scan/?apikey=$API_KEY&url=$SCAN_URL&recurse=true&inScopeOnly=false")
         echo "Active scan response: $ASCAN_JSON"
         SCAN_ID=$(echo "$ASCAN_JSON" | jq -r '.scan')
         echo "Scan id: $SCAN_ID"
@@ -72,10 +89,11 @@ phases:
         fi
 
         echo "=== 4) Reports ==="
-        curl -s "$ZAP_URL/OTHER/core/other/htmlreport/?apikey=$_API_KEY" > zap_report.html || \
+        # HTML report for everything in current session
         curl -s "$ZAP_URL/OTHER/core/other/htmlreport/?apikey=$API_KEY" > zap_report.html
 
-        curl -s "$ZAP_URL/JSON/core/view/alerts/?apikey=$API_KEY&baseurl=$TARGET" > zap_report.json
+        # JSON alerts for the specific site URL from tree
+        curl -s "$ZAP_URL/JSON/core/view/alerts/?apikey=$API_KEY&baseurl=$SCAN_URL" > zap_report.json
 
 artifacts:
   files:
