@@ -6,13 +6,10 @@ env:
     ZAP_VERSION: "2.16.1"
     ZAP_PROXY_URL: "https://github.com/zaproxy/zaproxy/releases/download/v2.16.1/ZAP_2.16.1_Linux.tar.gz"
 
-    # EFS (used ONLY for ZAP install + data cache + ZAP home, NOT for reports)
+    # EFS (used ONLY for ZAP install + data cache, NOT for reports)
     EFS_MOUNT_TARGET: "fs-0e6533aeea50371ed.efs.ap-south-1.amazonaws.com:/"
     EFS_MOUNT_DIR: "/efs"
     ZAP_INSTALL_BASE_DIR: "/efs/zap-proxy"
-
-    # ZAP home directory on EFS (replaces /root/.ZAP)
-    ZAP_HOME: "/efs/zap-proxy/home"
 
     EFS_MOUNT_OPTIONS: "nfsvers=4.1,rsize=1048576,wsize=1048576,hard,timeo=600,retrans=2,noresvport"
     RUN_DP_CHECK: "true"
@@ -42,14 +39,10 @@ phases:
       # Local report directory (NOT on EFS)
       - mkdir -p "$(pwd)/zap-report" || true
 
-      # EFS directories (for ZAP install/cache + ZAP home)
-      - mkdir -p "$EFS_MOUNT_DIR" "$ZAP_INSTALL_BASE_DIR" "$ZAP_HOME" || true
+      # EFS directories (for ZAP install/cache only)
+      - mkdir -p "$EFS_MOUNT_DIR" "$ZAP_INSTALL_BASE_DIR" || true
 
-      # TODO: mount EFS here (your existing EFS mounting code)
-      # Example (if using amazon-efs-utils):
-      # - |
-      #   echo "Mounting EFS..."
-      #   mount -t efs -o "${EFS_MOUNT_OPTIONS}" "${EFS_MOUNT_TARGET}" "${EFS_MOUNT_DIR}"
+      # [Your existing EFS mounting code remains the same...]
 
       - |
         echo "===== Preparing ZAP on EFS (binaries/cache only) ====="
@@ -74,7 +67,6 @@ phases:
         fi
 
         echo "ZAP is ready under: ${ZAP_INSTALL_DIR}"
-        echo "ZAP home directory (on EFS): ${ZAP_HOME}"
 
   build:
     commands:
@@ -98,7 +90,6 @@ phases:
 
         echo "Starting ZAP HTML scan..."
         "${ZAP_INSTALL_DIR}/zap.sh" -cmd \
-          -dir "${ZAP_HOME}" \
           -quickurl "${TARGET_URL}" \
           -quickprogress \
           -quickout "${REPORT_HTML}" 2>&1 | tee "${REPORT_DIR}/zap-scan.log"
@@ -117,7 +108,6 @@ phases:
       - |
         echo "Starting ZAP JSON scan..."
         "${ZAP_INSTALL_DIR}/zap.sh" -cmd \
-          -dir "${ZAP_HOME}" \
           -quickurl "${TARGET_URL}" \
           -quickprogress \
           -quickout "${REPORT_JSON}" \
