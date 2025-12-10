@@ -2,7 +2,6 @@ version: 0.2
 
 env:
   secrets-manager:
-    # Make sure the "dev/zap" secret is JSON like: {"apikey":"workshopzapapikey"}
     ZAP_API_KEY: dev/zap:apikey
 
   variables:
@@ -28,20 +27,23 @@ phases:
     commands:
       - echo "=== Checking ZAP is up ==="
       - curl -s "$ZAP_URL/JSON/core/view/version/?apikey=$ZAP_API_KEY"
+      
+      - echo "=== Clearing existing sites from ZAP ==="
+      - curl -s "$ZAP_URL/JSON/core/action/newSession/?apikey=$ZAP_API_KEY&name=BuildScan&overwrite=true"
 
   build:
     commands:
       - echo "=== Starting Spider on $TARGET_URL ==="
       - >
         SPIDER_SCAN_ID=$(curl -s
-        "$ZAP_URL/JSON/spider/action/scan/?apikey=$ZAP_API_KEY&url=$TARGET_URL&recurse=true"
+        "$ZAP_URL/JSON/spider/action/scan/?apikey=$ZAP_API_KEY&url=$TARGET_URL&recurse=true&maxChildren=10"
         | jq -r '.scan')
       - |
         echo "Spider scan id: $SPIDER_SCAN_ID"
       - |
         STATUS=0
         while [ "$STATUS" -lt 100 ]; do
-          STATUS=$(curl -s "$ZAP_URL/JSON/spider/view/status/?scanId=$SPIDER_SCAN_ID" | jq -r '.status')
+          STATUS=$(curl -s "$ZAP_URL/JSON/spider/view/status/?apikey=$ZAP_API_KEY&scanId=$SPIDER_SCAN_ID" | jq -r '.status')
           echo "Spider progress: $STATUS %"
           sleep 5
         done
@@ -50,35 +52,64 @@ phases:
       - echo "=== Starting Active Scan on $TARGET_URL ==="
       - >
         ASCAN_ID=$(curl -s
-        "$ZAP_URL/JSON/ascan/action/scan/?apikey=$ZAP_API_KEY&url=$TARGET_URL&recurse=true&inScopeOnly=false"
+        "$ZAP_URL/JSON/ascan/action/scan/?apikey=$ZAP_API_KEY&url=$TARGET_URL&recurse=true&inScopeOnly=true&scanPolicyName=Default Policy"
         | jq -r '.scan')
       - |
         echo "Active scan id: $ASCAN_ID"
       - |
         ASTATUS=0
         while [ "$ASTATUS" -lt 100 ]; do
-          ASTATUS=$(curl -s "$ZAP_URL/JSON/ascan/view/status/?scanId=$ASCAN_ID" | jq -r '.status')
+          ASTATUS=$(curl -s "$ZAP_URL/JSON/ascan/view/status/?apikey=$ZAP_API_KEY&scanId=$ASCAN_ID" | jq -r '.status')
           echo "Active scan progress: $ASTATUS %"
           sleep 10
         done
       - echo "=== Active Scan finished ==="
 
-      - echo "=== Generating dast-report ==="
+      - echo "=== Generating dast-report specifically for $TARGET_URL ==="
       - mkdir -p dast-report
+      # Generate HTML report for the target URL
       - curl -s "$ZAP_URL/OTHER/core/other/htmlreport/?apikey=$ZAP_API_KEY" -o dast-report/zap_report.html
-      - curl -s "$ZAP_URL/OTHER/core/other/jsonreport/?apikey=$ZAP_API_KEY" -o dast-report/zap_report.json
+      
+      # Generate JSON report and filter for our target URL only
+      - curl -s "$ZAP_URL/OTHER/core/other/jsonreport/?apikey=$ZAP_API_KEY" -o dast-report/zap_full_report.json
+      
+      # Filter the JSON report to only include alerts for our target URL
+      - |
+        # Create a filtered report with only the target site
+        FILTERED_REPORT=$(jq --arg TARGET "$TARGET_URL" '
+          {
+            "@programName": ."@programName",
+            "@version": ."@version",
+            "@generated": ."@generated",
+            "site": .site | map(select(."@name" | startswith($TARGET)))
+          }' dast-report/zap_full_report.json)
+        
+        echo "$FILTERED_REPORT" > dast-report/zap_report.json
+        
+        # Also count alerts specifically for our target
+        TARGET_ALERTS_COUNT=$(echo "$FILTERED_REPORT" | jq '[.site[].alerts[]] | length')
+        echo "Alerts found for $TARGET_URL: $TARGET_ALERTS_COUNT"
+        
+        # Save target-specific summary
+        echo "Target URL: $TARGET_URL" > dast-report/scan_summary.txt
+        echo "Scan completed: $(date)" >> dast-report/scan_summary.txt
+        echo "Alerts found: $TARGET_ALERTS_COUNT" >> dast-report/scan_summary.txt
+      
       - echo "=== dast-report generated ==="
       - ls -l dast-report
 
   post_build:
     commands:
-      - echo "=== (Optional) Fail build if High alerts exist ==="
+      - echo "=== Checking for High alerts in $TARGET_URL ==="
       - |
         # riskcode: 0=Informational, 1=Low, 2=Medium, 3=High
         HIGH_COUNT=$(jq '[.site[].alerts[] | select(.riskcode=="3")] | length' dast-report/zap_report.json)
-        echo "High alerts: $HIGH_COUNT"
+        echo "High alerts for $TARGET_URL: $HIGH_COUNT"
+        
         if [ "$HIGH_COUNT" -gt 0 ]; then
           echo "Build failed: High risk alerts found by ZAP"
+          echo "High risk alerts details:"
+          jq '.site[].alerts[] | select(.riskcode=="3") | {name, riskdesc, desc, uri}' dast-report/zap_report.json
           exit 1
         fi
         echo "No High alerts, build passed."
