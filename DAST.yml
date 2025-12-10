@@ -11,106 +11,82 @@ env:
 phases:
   install:
     commands:
-      - echo "=== Install jq & html-xml-utils ==="
       - yum install -y jq html-xml-utils || apt-get install -y jq html-xml-utils
 
   pre_build:
     commands:
-      - echo "=== Checking ZAP Daemon ==="
+      - echo "=== Checking ZAP ==="
       - curl "$ZAP_URL/JSON/core/view/version/?apikey=$ZAP_API_KEY"
-
-      - echo "=== Checking Website Reachable ==="
       - curl -I "$TARGET_URL"
-
-      - echo "=== Encode Target URL ==="
       - ENCODED_TARGET=$(printf %s "$TARGET_URL" | jq -sRr @uri)
-      - |
-        echo "Encoded Target: $ENCODED_TARGET"
+      - echo "Encoded URL: $ENCODED_TARGET"
 
   build:
     commands:
-      ####################################################################
-      # START SPIDER
-      ####################################################################
-      - echo "=== Starting ZAP Spider ==="
-      - >
-        SPIDER_SCAN_ID=$(curl -s
-          "$ZAP_URL/JSON/spider/action/scan/?apikey=$ZAP_API_KEY&url=$ENCODED_TARGET&recurse=true"
-          | jq -r '.scan')
-      - |
-        echo "Spider ID: $SPIDER_SCAN_ID"
+      # ----------------------------------------------------------
+      # SPIDER START
+      # ----------------------------------------------------------
+      - echo "=== Starting Spider ==="
+      - SPIDER_SCAN_ID=$(curl -s "$ZAP_URL/JSON/spider/action/scan/?apikey=$ZAP_API_KEY&url=$ENCODED_TARGET&recurse=true" | jq -r '.scan')
+      - echo "Spider ID: $SPIDER_SCAN_ID"
 
       - |
         STATUS=0
         while [ "$STATUS" -lt 100 ]; do
           STATUS=$(curl -s "$ZAP_URL/JSON/spider/view/status/?scanId=$SPIDER_SCAN_ID" | jq -r '.status')
-          echo "Spider: $STATUS%"
+          echo "Spider: $STATUS %"
           sleep 5
         done
 
-      ####################################################################
+      # ----------------------------------------------------------
       # ACTIVE SCAN
-      ####################################################################
+      # ----------------------------------------------------------
       - echo "=== Starting Active Scan ==="
-      - >
-        ASCAN_ID=$(curl -s
-          "$ZAP_URL/JSON/ascan/action/scan/?apikey=$ZAP_API_KEY&url=$ENCODED_TARGET&recurse=true&inScopeOnly=false"
-          | jq -r '.scan')
-      - |
-        echo "Active Scan ID: $ASCAN_ID"
+      - ASCAN_ID=$(curl -s "$ZAP_URL/JSON/ascan/action/scan/?apikey=$ZAP_API_KEY&url=$ENCODED_TARGET&recurse=true&inScopeOnly=false" | jq -r '.scan')
+      - echo "Active Scan ID: $ASCAN_ID"
 
       - |
         ASTATUS=0
         while [ "$ASTATUS" -lt 100 ]; do
           ASTATUS=$(curl -s "$ZAP_URL/JSON/ascan/view/status/?scanId=$ASCAN_ID" | jq -r '.status')
-          echo "Active Scan: $ASTATUS%"
+          echo "Active Scan: $ASTATUS %"
           sleep 8
         done
 
-      ####################################################################
+      # ----------------------------------------------------------
       # GENERATE RAW REPORTS
-      ####################################################################
+      # ----------------------------------------------------------
       - mkdir -p dast-report
-      - echo "=== Downloading RAW Reports ==="
       - curl -s "$ZAP_URL/OTHER/core/other/htmlreport/?apikey=$ZAP_API_KEY" -o dast-report/raw.html
       - curl -s "$ZAP_URL/OTHER/core/other/jsonreport/?apikey=$ZAP_API_KEY" -o dast-report/raw.json
 
-      ####################################################################
-      # FILTER JSON — ONLY TARGET URL
-      ####################################################################
-      - echo "=== Filtering JSON for target only ==="
-      - |
-        jq --arg TARGET "$TARGET_URL" '
-          .site |= map(select(.["@name"] | startswith($TARGET)))
-        ' dast-report/raw.json > dast-report/zap_report.json
+      # ----------------------------------------------------------
+      # FILTER JSON ONLY TARGET
+      # ----------------------------------------------------------
+      - echo "=== Filtering JSON ==="
+      - jq --arg TARGET "$TARGET_URL" '.site |= map(select(.["@name"] | startswith($TARGET)))' dast-report/raw.json > dast-report/zap_report.json
 
-      ####################################################################
-      # FILTER HTML — ONLY TARGET URL
-      ####################################################################
-      - echo "=== Filtering HTML for target only ==="
-      - |
-        DOMAIN=$(echo "$TARGET_URL" | sed 's|https\?://||' | sed 's|/||g')
-        hxnormalize -x dast-report/raw.html \
-          | hxselect "h2:contains('$DOMAIN'), h3, table, p, div" \
-          > dast-report/zap_report.html
+      # ----------------------------------------------------------
+      # FILTER HTML ONLY TARGET
+      # ----------------------------------------------------------
+      - echo "=== Filtering HTML ==="
+      - DOMAIN=$(echo "$TARGET_URL" | sed 's|https\?://||' | sed 's|/||g')
+      - hxnormalize -x dast-report/raw.html | hxselect "h2:contains('$DOMAIN'), h3, table, p, div" > dast-report/zap_report.html
 
-      - echo "=== FINAL REPORTS GENERATED ==="
+      - echo "=== REPORTS GENERATED ==="
       - ls -l dast-report
 
   post_build:
     commands:
       - echo "=== Checking High Alerts ==="
-      - >
-        HIGH=$(jq '[.site[].alerts[] | select(.riskcode=="3")] | length' \
-          dast-report/zap_report.json)
-      - |
-        echo "High alerts found: $HIGH"
+      - HIGH=$(jq '[.site[].alerts[] | select(.riskcode=="3")] | length' dast-report/zap_report.json)
+      - echo "High Alerts Found: $HIGH"
       - |
         if [ "$HIGH" -gt 0 ]; then
-          echo "❌ High risk found."
+          echo "❌ High alerts found."
           exit 1
         fi
-        echo "✅ No High alerts, build OK."
+        echo "✅ No high alerts found."
 
 artifacts:
   files:
