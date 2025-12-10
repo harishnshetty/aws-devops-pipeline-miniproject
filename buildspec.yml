@@ -294,9 +294,10 @@ phases:
       - ls -la dependency-check-reports/ || true
       - ls -la dc_tmp || true
 
-      # 🔹 Upload reports (and imagedefinitions) to S3 using CodePipeline execution ID
+      #  Upload reports (and imagedefinitions) to S3 using CodePipeline execution ID
       - echo "===== Uploading security reports to S3 ====="
-      - echo "Pipeline execution: ${PIPELINE_EXECUTION_ID}"
+      - |
+        echo "Pipeline execution: ${PIPELINE_EXECUTION_ID}"
       - aws s3 cp trivy-reports/ "s3://zomato-report/${PIPELINE_EXECUTION_ID}/trivy-reports/" --recursive
       - aws s3 cp dependency-check-reports/ "s3://zomato-report/${PIPELINE_EXECUTION_ID}/dependency-check-reports/" --recursive
       - aws s3 cp imagedefinitions.json "s3://zomato-report/${PIPELINE_EXECUTION_ID}/imagedefinitions.json"
