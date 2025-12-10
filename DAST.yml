@@ -4,12 +4,16 @@ env:
   variables:
     # ZAP download details
     ZAP_VERSION: "2.16.1"
+    # *** CHANGE: Using the .sh installer as requested ***
     ZAP_PROXY_URL: "https://github.com/zaproxy/zaproxy/releases/download/v2.16.1/ZAP_2_16_1_unix.sh"
+    ZAP_INSTALLER_NAME: "ZAP_2_16_1_unix.sh"
+    # The installer typically creates a directory named "ZAP_2.16.1" under the install path
+    ZAP_INSTALL_DIR_NAME: "ZAP-2.16.1"
 
     # EFS (used for ZAP install + data cache)
     EFS_MOUNT_TARGET: "fs-0e6533aeea50371ed.efs.ap-south-1.amazonaws.com:/"
     EFS_MOUNT_DIR: "/efs"
-    ZAP_SCAN_DATA_DIR: "/efs/zap-proxy"
+    ZAP_SCAN_DATA_DIR: "/efs/zap-proxy" # This will be the parent directory for the install
 
     EFS_MOUNT_OPTIONS: "nfsvers=4.1,rsize=1048576,wsize=1048576,hard,timeo=600,retrans=2,noresvport"
     RUN_DP_CHECK: "true"
@@ -27,6 +31,7 @@ phases:
     commands:
       - echo "===== pre_build phase ====="
       - |
+        # Install necessary dependencies
         if command -v apt-get >/dev/null 2>&1; then
           apt-get update -y
           apt-get install -y jq curl unzip wget openjdk-17-jre nfs-common amazon-efs-utils python3 || true
@@ -42,8 +47,8 @@ phases:
       # EFS directories (for ZAP install/cache)
       - mkdir -p "$EFS_MOUNT_DIR" "$ZAP_SCAN_DATA_DIR" || true
 
+      # EFS check & optional fallback manual mount (Unmodified EFS logic)
       - |
-        # EFS check & optional fallback manual mount
         echo "Checking EFS mountpoint: $EFS_MOUNT_DIR"
         if [ "$RUN_DP_CHECK" = "true" ]; then
           if mountpoint -q "$EFS_MOUNT_DIR"; then
@@ -87,27 +92,36 @@ phases:
           echo "RUN_DP_CHECK != true — skipping EFS checks."
         fi
 
+      # ZAP Preparation (Corrected to use the .sh installer script)
       - |
-        echo "===== Preparing ZAP on EFS ====="
-        chmod +x ZAP_2_16_1_unix.sh || true
-        ZAP_TAR_NAME="ZAP_${ZAP_VERSION}_Linux.tar.gz"
-        ZAP_TAR_PATH="${ZAP_SCAN_DATA_DIR}/${ZAP_TAR_NAME}"
-        ZAP_INSTALL_DIR="${ZAP_SCAN_DATA_DIR}/ZAP_${ZAP_VERSION}"
+        echo "===== Preparing ZAP on EFS using ${ZAP_INSTALLER_NAME} ====="
+        ZAP_INSTALLER_PATH="${ZAP_SCAN_DATA_DIR}/${ZAP_INSTALLER_NAME}"
+        ZAP_INSTALL_ROOT_DIR="${ZAP_SCAN_DATA_DIR}"
+        ZAP_INSTALL_DIR="${ZAP_INSTALL_ROOT_DIR}/${ZAP_INSTALL_DIR_NAME}"
 
-        # 1) If ZAP already extracted on EFS, just reuse it
+        # 1) If ZAP already installed on EFS, just reuse it
         if [ -x "${ZAP_INSTALL_DIR}/zap.sh" ]; then
-          echo "ZAP already extracted at ${ZAP_INSTALL_DIR}, skipping download."
+          echo "ZAP already installed at ${ZAP_INSTALL_DIR}, skipping download and installation."
         else
-          # 2) If tarball already cached on EFS, reuse it
-          if [ -f "${ZAP_TAR_PATH}" ]; then
-            echo "Found existing ZAP tarball in EFS: ${ZAP_TAR_PATH}"
+          # 2) If installer already cached on EFS, reuse it
+          if [ -f "${ZAP_INSTALLER_PATH}" ]; then
+            echo "Found existing ZAP installer in EFS: ${ZAP_INSTALLER_PATH}"
           else
-            echo "ZAP tarball not found in EFS, downloading..."
-            curl -sSL "${ZAP_PROXY_URL}" -o "${ZAP_TAR_PATH}"
+            echo "ZAP installer not found in EFS, downloading..."
+            curl -sSL "${ZAP_PROXY_URL}" -o "${ZAP_INSTALLER_PATH}"
           fi
-
-          echo "Extracting ZAP tarball into ${ZAP_SCAN_DATA_DIR}..."
-          tar -xzf "${ZAP_TAR_PATH}" -C "${ZAP_SCAN_DATA_DIR}"
+          
+          # Give execute permission and run the installer in silent mode
+          echo "Running ZAP installer into ${ZAP_INSTALL_ROOT_DIR}..."
+          chmod +x "${ZAP_INSTALLER_PATH}"
+          # -q for silent mode, -dir to specify the installation directory
+          "${ZAP_INSTALLER_PATH}" -q -dir "${ZAP_INSTALL_ROOT_DIR}"
+          
+          # The silent installer should create the ZAP-2.16.1 directory inside the specified root dir.
+          if [ ! -d "${ZAP_INSTALL_DIR}" ]; then
+              echo "FATAL ERROR: ZAP installation directory ${ZAP_INSTALL_DIR} was not created by the installer!"
+              exit 1
+          fi
         fi
 
         echo "ZAP is ready under: ${ZAP_INSTALL_DIR}"
@@ -116,11 +130,12 @@ phases:
     commands:
       - echo "===== build (ZAP Baseline Scan) phase ====="
       - TARGET_URL="https://staging.harishshetty.xyz/"
-      - ZAP_INSTALL_DIR="${ZAP_SCAN_DATA_DIR}/ZAP_${ZAP_VERSION}"
+      - ZAP_INSTALL_DIR="${ZAP_SCAN_DATA_DIR}/${ZAP_INSTALL_DIR_NAME}"
       - REPORT_HTML="zap-report/zap_baseline.html"
       - REPORT_JSON="zap-report/zap_baseline.json"
       - echo "Running ZAP Baseline scan against ${TARGET_URL}"
       - |
+        # The zap-baseline.py script is located inside the ZAP_INSTALL_DIR
         python3 "${ZAP_INSTALL_DIR}/zap-baseline.py" \
           -t "${TARGET_URL}" \
           -r "${REPORT_HTML}" \
