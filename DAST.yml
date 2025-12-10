@@ -103,15 +103,14 @@ phases:
         HTML_EXIT_CODE=$?
         echo "ZAP HTML scan exit code: ${HTML_EXIT_CODE}"
 
-      # JSON report
+      # JSON report (no -format, ZAP uses .json extension)
       - |
         echo "Starting ZAP JSON scan..."
         "${ZAP_INSTALL_DIR}/zap.sh" -cmd \
           -dir "${ZAP_HOME}" \
           -quickurl "${TARGET_URL}" \
           -quickprogress \
-          -quickout "${REPORT_JSON}" \
-          -format json
+          -quickout "${REPORT_JSON}"
         JSON_EXIT_CODE=$?
         echo "ZAP JSON scan exit code: ${JSON_EXIT_CODE}"
 
