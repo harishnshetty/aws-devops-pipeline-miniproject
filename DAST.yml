@@ -26,10 +26,12 @@ phases:
       - echo "=== Checking ZAP connection ==="
       - curl -s "$ZAP_URL/JSON/core/view/version/?apikey=$ZAP_API_KEY"
       - echo "=== Checking TARGET_URL reachability ==="
-      - curl -I $TARGET_URL || { echo "❌ ERROR: Target not reachable"; exit 1; }
+      - |
+        curl -I $TARGET_URL || { echo "❌ ERROR: Target not reachable"; exit 1; }
       - echo "=== Encoding URL ==="
       - ENCODED_TARGET=$(printf %s "$TARGET_URL" | jq -sRr @uri)
-      - echo "Encoded Target: $ENCODED_TARGET"
+      - |
+        echo "Encoded Target: $ENCODED_TARGET"
 
   build:
     commands:
