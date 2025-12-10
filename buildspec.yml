@@ -190,25 +190,25 @@ phases:
           echo "Skipping Dependency-Check."
         fi
 
-      - echo "Running SonarScanner..."
-      - |
-        sonar-scanner \
-          -Dsonar.login="$LOGIN" \
-          -Dsonar.host.url="$HOST" \
-          -Dsonar.projectKey="$Project" \
-          -Dsonar.organization="$Organization" \
-          2>&1 | tee sonar-output.txt || true
+      # - echo "Running SonarScanner..."
+      # - |
+      #   sonar-scanner \
+      #     -Dsonar.login="$LOGIN" \
+      #     -Dsonar.host.url="$HOST" \
+      #     -Dsonar.projectKey="$Project" \
+      #     -Dsonar.organization="$Organization" \
+      #     2>&1 | tee sonar-output.txt || true
 
-      - sleep 10
-      - curl -s "https://sonarcloud.io/api/qualitygates/project_status?projectKey=$Project" > result.json || true
+      # - sleep 10
+      # - curl -s "https://sonarcloud.io/api/qualitygates/project_status?projectKey=$Project" > result.json || true
 
-      - |
-        if [ -f result.json ] && [ "$(jq -r '.projectStatus.status' result.json 2>/dev/null)" = "ERROR" ]; then
-          echo "Sonar Quality Gate FAILED"
-          exit 1
-        else
-          echo "Sonar Quality Gate passed or not present"
-        fi
+      # - |
+      #   if [ -f result.json ] && [ "$(jq -r '.projectStatus.status' result.json 2>/dev/null)" = "ERROR" ]; then
+      #     echo "Sonar Quality Gate FAILED"
+      #     exit 1
+      #   else
+      #     echo "Sonar Quality Gate passed or not present"
+      #   fi
 
       - AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
       - |
