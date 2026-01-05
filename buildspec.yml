@@ -8,7 +8,7 @@ env:
     Project: dev/sonar:Project
 
   variables:
-    SONAR_SCANNER_URL: "https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-7.3.0.5189-linux-x64.zip"
+    SONAR_SCANNER_URL: "https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-8.0.1.6346-linux-x64.zip"
     TRIVY_URL: "https://github.com/aquasecurity/trivy/releases/download/v0.67.2/trivy_0.67.2_Linux-64bit.tar.gz"
     DEP_CHECK_URL: "https://github.com/dependency-check/DependencyCheck/releases/download/v12.1.9/dependency-check-12.1.9-release.zip"
 
@@ -19,9 +19,11 @@ env:
     TRIVY_FAIL_IMAGE: "false"
 
     # EFS... (used only for Dependency-Check DATA cache)
-    EFS_MOUNT_TARGET: "fs-0e6533aeea50371ed.efs.ap-south-1.amazonaws.com:/"
+    EFS_MOUNT_TARGET: "fs-00630cd577654f837.efs.ap-south-1.amazonaws.com:/"
     EFS_MOUNT_DIR: "/efs"
     DP_CHECK_DATA_DIR: "/efs/dependency-check-data"
+    SONAR_USER_HOME: "/efs/sonar-cache"
+    TRIVY_CACHE_DIR: "/efs/trivy-cache"
 
     # IMPORTANT: reports are now LOCAL for artifacts (not on EFS)
     DP_CHECK_REPORT_DIR: "dependency-check-reports"
@@ -61,7 +63,7 @@ phases:
       - mkdir -p dependency-check-reports trivy-reports || true
 
       # EFS directories (only for DATA cache)
-      - mkdir -p "$EFS_MOUNT_DIR" "$DP_CHECK_DATA_DIR" || true
+      - mkdir -p "$EFS_MOUNT_DIR" "$DP_CHECK_DATA_DIR" "$SONAR_USER_HOME" "$TRIVY_CACHE_DIR" || true
 
       - |
         # EFS check & optional fallback manual mount
@@ -121,7 +123,6 @@ phases:
           echo "sonar-scanner not found; sonar step may fail."
         fi
       - sonar-scanner --version || true
-
       - echo "Downloading Dependency-Check CLI..."
       - mkdir -p dc_tmp || true
       - wget -q "$DEP_CHECK_URL" -O depcheck.zip || curl -sSL "$DEP_CHECK_URL" -o depcheck.zip || true
@@ -295,12 +296,12 @@ phases:
       - ls -la dc_tmp || true
 
       #  Upload reports (and imagedefinitions) to S3 using CodePipeline execution ID
-      - echo "===== Uploading security reports to S3 ====="
-      - |
-        echo "Pipeline execution: ${PIPELINE_EXECUTION_ID}"
-      - aws s3 cp trivy-reports/ "s3://zomato-report/${PIPELINE_EXECUTION_ID}/trivy-reports/" --recursive
-      - aws s3 cp dependency-check-reports/ "s3://zomato-report/${PIPELINE_EXECUTION_ID}/dependency-check-reports/" --recursive
-      - aws s3 cp imagedefinitions.json "s3://zomato-report/${PIPELINE_EXECUTION_ID}/imagedefinitions.json"
+      # - echo "===== Uploading security reports to S3 ====="
+      # - |
+      #   echo "Pipeline execution: ${PIPELINE_EXECUTION_ID}"
+      # - aws s3 cp trivy-reports/ "s3://zomato-report/${PIPELINE_EXECUTION_ID}/trivy-reports/" --recursive
+      # - aws s3 cp dependency-check-reports/ "s3://zomato-report/${PIPELINE_EXECUTION_ID}/dependency-check-reports/" --recursive
+      # - aws s3 cp imagedefinitions.json "s3://zomato-report/${PIPELINE_EXECUTION_ID}/imagedefinitions.json"
 
 artifacts:
   files:
