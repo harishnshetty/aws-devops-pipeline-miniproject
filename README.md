@@ -32,7 +32,7 @@ For any additional help, please contact me from [here](https://www.learnandshare
 
 - Settings -> Developer Settings -> Personal Access Token -> Tokens (Classic)
 - Note: aws-desecops-cicd
-- Save the Token: xsdfjk
+- Save the Token: 
 
 ## Step 2: Create the https://sonarqube.io/ account and create a new project
 
