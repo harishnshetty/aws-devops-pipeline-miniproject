@@ -11,7 +11,6 @@ env:
     SONAR_SCANNER_URL: "https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-8.0.1.6346-linux-x64.zip"
     TRIVY_URL: "https://github.com/aquasecurity/trivy/releases/download/v0.67.2/trivy_0.67.2_Linux-64bit.tar.gz"
     DEP_CHECK_URL: "https://github.com/dependency-check/DependencyCheck/releases/download/v12.1.9/dependency-check-12.1.9-release.zip"
-
     S3_BUCKET_NAME: "zomato-report" # replace with your S3 bucket name
     IMAGE_REPO_NAME: "zomato"
     IMAGE_TAG: ""
