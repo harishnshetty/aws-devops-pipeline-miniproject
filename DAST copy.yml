@@ -8,6 +8,7 @@ env:
   variables:
     ZAP_URL: "http://10.0.7.152:8080"
     TARGET_URL: "https://staging.harishshetty.xyz/"
+    S3_BUCKET_NAME: "zomato-report" # replace with your S3 bucket name
 
 phases:
   install:
@@ -46,7 +47,6 @@ phases:
           sleep 5
         done
       - echo "=== Spider finished ==="
-
       - echo "=== Starting Active Scan on $TARGET_URL ==="
       - >
         ASCAN_ID=$(curl -s
@@ -62,7 +62,6 @@ phases:
           sleep 10
         done
       - echo "=== Active Scan finished ==="
-
       - echo "=== Generating dast-report ==="
       - mkdir -p dast-report
       - curl -s "$ZAP_URL/OTHER/core/other/htmlreport/?apikey=$ZAP_API_KEY" -o dast-report/zap_report.html

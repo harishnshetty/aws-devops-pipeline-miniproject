@@ -6,6 +6,7 @@ env:
     ZAP_VERSION: "2.16.1"
     ZAP_PROXY_URL: "https://github.com/zaproxy/zaproxy/releases/download/v2.16.1/ZAP_2.16.1_Linux.tar.gz"
     SCANNING_URL: "https://staging.harishshetty.xyz/"
+    S3_BUCKET_NAME: "zomato-report" # replace with your S3 bucket name
 
     # EFS (used ONLY for ZAP install + data cache + ZAP home, NOT for reports)
     EFS_MOUNT_TARGET: "fs-08649ea21051a2682.efs.ap-south-1.amazonaws.com:/"
@@ -135,7 +136,7 @@ phases:
       - echo "===== Uploading reports to S3 ====="
       - |
         echo "Pipeline execution: ${PIPELINE_EXECUTION_ID}"
-      - aws s3 cp "${REPORT_DIR}/" "s3://zomato-report/${PIPELINE_EXECUTION_ID}/" --recursive
+      - aws s3 cp "${REPORT_DIR}/" "s3://${S3_BUCKET_NAME}/${PIPELINE_EXECUTION_ID}/" --recursive
 
 artifacts:
   files:

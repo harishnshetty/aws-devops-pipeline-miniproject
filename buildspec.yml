@@ -12,6 +12,7 @@ env:
     TRIVY_URL: "https://github.com/aquasecurity/trivy/releases/download/v0.67.2/trivy_0.67.2_Linux-64bit.tar.gz"
     DEP_CHECK_URL: "https://github.com/dependency-check/DependencyCheck/releases/download/v12.1.9/dependency-check-12.1.9-release.zip"
 
+    S3_BUCKET_NAME: "zomato-report" # replace with your S3 bucket name
     IMAGE_REPO_NAME: "zomato"
     IMAGE_TAG: ""
 
@@ -319,11 +320,11 @@ phases:
       - echo "===== Uploading security reports to S3 ====="
       - |
         echo "Pipeline execution: ${PIPELINE_EXECUTION_ID}"
-      - aws s3 cp trivy-reports/ "s3://zomato-report/${PIPELINE_EXECUTION_ID}/trivy-reports/" --recursive
-      - aws s3 cp dependency-check-reports/ "s3://zomato-report/${PIPELINE_EXECUTION_ID}/dependency-check-reports/" --recursive
-      - aws s3 cp imagedefinitions.json "s3://zomato-report/${PIPELINE_EXECUTION_ID}/imagedefinitions.json"
-      - aws s3 cp sonar-output.txt "s3://zomato-report/${PIPELINE_EXECUTION_ID}/sonar-output.txt"
-      - aws s3 cp result.json "s3://zomato-report/${PIPELINE_EXECUTION_ID}/result.json"
+      - aws s3 cp trivy-reports/ "s3://${S3_BUCKET_NAME}/${PIPELINE_EXECUTION_ID}/trivy-reports/" --recursive
+      - aws s3 cp dependency-check-reports/ "s3://${S3_BUCKET_NAME}/${PIPELINE_EXECUTION_ID}/dependency-check-reports/" --recursive
+      - aws s3 cp imagedefinitions.json "s3://${S3_BUCKET_NAME}/${PIPELINE_EXECUTION_ID}/imagedefinitions.json"
+      - aws s3 cp sonar-output.txt "s3://${S3_BUCKET_NAME}/${PIPELINE_EXECUTION_ID}/sonar-output.txt"
+      - aws s3 cp result.json "s3://${S3_BUCKET_NAME}/${PIPELINE_EXECUTION_ID}/result.json"
 
 artifacts:
   files:
