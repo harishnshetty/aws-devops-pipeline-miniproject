@@ -123,6 +123,7 @@
 * Sonarqube Scanner: [https://docs.sonarsource.com/sonarqube-server/10.8/analyzing-source-code/scanners/sonarscanner](https://docs.sonarsource.com/sonarqube-server/10.8/analyzing-source-code/scanners/sonarscanner)
 * Trivy: [https://github.com/aquasecurity/trivy](https://github.com/aquasecurity/trivy)
 * Dependency-Check: [https://github.com/dependency-check/DependencyCheck/releases](https://github.com/dependency-check/DependencyCheck/releases)
+* S3 Bucket Name
 
 ### Configuration Updates
 
@@ -143,6 +144,18 @@
 * Ensure the scanner URLs always point to the latest stable versions.
 * The Sonar token must be securely stored and referenced in `buildspec.yml`.
 * Updating the EFS ID is mandatory if you are using a different file system across environments.
+
+---
+
+## Need to Edit in the DAST.yml before you build start
+
+### Tool Version Updates
+* ZAP_PROXY_URL  [https://github.com/zaproxy/zaproxy/releases/download/v2.17.0/ZAP_2.17.0_Linux.tar.gz] (https://www.zaproxy.org/download/) 
+* S3 Bucket Name
+* scanning url [https://staging.harishshetty.xyz/](https://staging.harishshetty.xyz/)
+
+### Configuration Updates
+* Replace the EFS ID
 
 ---
 
