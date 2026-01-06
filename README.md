@@ -42,8 +42,8 @@ For any additional help, please contact me from [here](https://www.learnandshare
 
 ## Step 3: Create the VPC Network
 
-- 1 Public
-- 1 Private
+- 2 Public
+- 2 Private
 
 ## Step 4: Create the S3 Bucket and EFS 
 
@@ -102,6 +102,37 @@ Project         | sonarcloud-aws-cp
 - AmazonS3FullAccess
 
 
+## Step 6: Create the ECS TaskDefinition and Cluster
+- staging-zomato
+- cpu : .5
+- memory: 1GB
+- Container - 1 
+- Container Name: zomato
+- Image: zomato
+- port: 80
+
+### Create the ECS Cluster and service
+- zomato-cluster
+- staging-zomato
+- Launch type [FARGATE]
+- Networking
+- Subnet  [2 Private Subnet]
+- Create a new security group [Staging SG]
+- Public IP [off]
+
+- Load balancing
+- Target-Group [staging-zomato-tg]
+- Protocol [HTTP]
+- Port [80]
+- Health check path [/]
+
+### go-to the ALB
+- edit the network private subnet to Public Subnet
+- add listern 443
+
+### create the ACM and the Route 53 record
+- Create the ACM
+- Create the Route 53 record
 
 ## What Need to be Delete
 - Github Token

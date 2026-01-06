@@ -5,9 +5,10 @@ env:
     # ZAP download details
     ZAP_VERSION: "2.16.1"
     ZAP_PROXY_URL: "https://github.com/zaproxy/zaproxy/releases/download/v2.16.1/ZAP_2.16.1_Linux.tar.gz"
+    SCANNING_URL: "https://staging.harishshetty.xyz/"
 
     # EFS (used ONLY for ZAP install + data cache + ZAP home, NOT for reports)
-    EFS_MOUNT_TARGET: "fs-0e6533aeea50371ed.efs.ap-south-1.amazonaws.com:/"
+    EFS_MOUNT_TARGET: "fs-08649ea21051a2682.efs.ap-south-1.amazonaws.com:/"
     EFS_MOUNT_DIR: "/efs"
     ZAP_INSTALL_BASE_DIR: "/efs/zap-proxy"
 
@@ -79,7 +80,7 @@ phases:
   build:
     commands:
       - echo "===== build (ZAP Baseline Scan) phase ====="
-      - TARGET_URL="https://staging.harishshetty.xyz/"
+      - TARGET_URL="${SCANNING_URL}"
       - ZAP_INSTALL_DIR="${ZAP_INSTALL_BASE_DIR}/ZAP_${ZAP_VERSION}"
 
       # Local report directory (workspace)
@@ -130,11 +131,11 @@ phases:
 
       - echo "Build phase completed"
 
-      # Upload reports to S3 using CodePipeline execution ID
-      - echo "===== Uploading reports to S3 ====="
-      - |
-        echo "Pipeline execution: ${PIPELINE_EXECUTION_ID}"
-      - aws s3 cp "${REPORT_DIR}/" "s3://zomato-report/${PIPELINE_EXECUTION_ID}/" --recursive
+      # # Upload reports to S3 using CodePipeline execution ID
+      # - echo "===== Uploading reports to S3 ====="
+      # - |
+      #   echo "Pipeline execution: ${PIPELINE_EXECUTION_ID}"
+      # - aws s3 cp "${REPORT_DIR}/" "s3://zomato-report/${PIPELINE_EXECUTION_ID}/" --recursive
 
 artifacts:
   files:
